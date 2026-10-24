@@ -17,7 +17,7 @@ The rhythm comes from your MIDI: notes hit instantly, hold while the key is down
 ## What you need
 
 - **Windows 10 or 11, 64-bit.**
-- A host that loads **VST3 instruments**. Dropforge is developed and tested in **[REAPER](https://www.reaper.fm/)**. Other VST3 hosts (Ableton Live, Bitwig Studio, Cubase, Studio One, FL Studio…) should work but are **not tested yet**; FL Studio in particular is unverified.
+- Any music program (DAW) that loads **VST3 instruments**.
 - Or no host at all: the **Standalone** app runs on its own with a MIDI keyboard.
 - macOS and Linux builds are not available yet.
 
@@ -32,11 +32,11 @@ Dropforge runs completely offline: no account, no licence server, no internet co
 
 The binaries are not code-signed, so Windows SmartScreen may warn the first time you run the Standalone app; choose *More info → Run anyway* if you trust the download.
 
-## First steps in REAPER
+## First steps
 
-1. Open REAPER and let it scan for new plugins (*Options → Preferences → Plug-ins → VST → Re-scan* if Dropforge does not appear).
-2. Insert a new track, click **FX**, search for **Dropforge** and add it as the track's instrument.
-3. Arm the track for recording with your MIDI keyboard as input and enable monitoring, or draw MIDI notes in a MIDI item.
+1. Open your music program and let it scan for new VST3 plugins (most rescan on start; otherwise look for a plugin rescan option in its settings).
+2. Create an instrument track and load **Dropforge** on it.
+3. Arm the track with your MIDI keyboard as input and enable monitoring, or draw MIDI notes on the track. With the Standalone app, just pick your MIDI keyboard and audio output in its settings.
 4. Play: low power chords for breakdowns, wider chords for drops. Turn layers on or off with their power switches and set their levels; **Output** sets the overall volume.
 
 ## Build from source
@@ -59,7 +59,7 @@ Project layout: `shared/dsp-core` (reusable DSP building blocks), `src/dsp` (the
 
 ## Third-party software
 
-Dropforge is built with [JUCE](https://juce.com/) (used under its free Starter licence) and the Steinberg VST3 SDK bundled with it (MIT). Their notices, and those of the libraries JUCE compiles in, are in [`packaging/licenses`](packaging/licenses) and ship inside every release. VST is a registered trademark of Steinberg Media Technologies GmbH. REAPER is a trademark of Cockos Incorporated. Dropforge is not affiliated with or endorsed by either.
+Dropforge is built with [JUCE](https://juce.com/) (used under its free Starter licence) and the Steinberg VST3 SDK bundled with it (MIT). Their notices, and those of the libraries JUCE compiles in, are in [`packaging/licenses`](packaging/licenses) and ship inside every release. VST is a registered trademark of Steinberg Media Technologies GmbH. Dropforge is not affiliated with or endorsed by Steinberg.
 
 ## Licence
 
