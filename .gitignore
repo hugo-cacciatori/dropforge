@@ -1,0 +1,36 @@
+# Build trees, portable tools, pinned sources and local releases
+/build/
+/build-*/
+/out/
+/dist/
+CMakeUserPresets.json
+
+# IDE and operating-system files
+.vs/
+.vscode/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python analysis helpers and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local secrets
+.env
+.env.*
+
+# Private working notes and internal specifications, kept in a separate repository
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.codex/
+.gemini/
+.git-docs/
+/docs/

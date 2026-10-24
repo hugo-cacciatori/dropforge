@@ -1,0 +1,191 @@
+#include "dsp/Engine.h"
+#include "support/StereoMetrics.h"
+#include <juce_core/juce_core.h>
+#include <iostream>
+
+namespace
+{
+struct Event { int sample, kind, channel, note, value; };
+struct Audio { std::vector<float> left, right, bass; };
+double reconstructionError = 0.0;
+int isolatedFixtures = 0;
+Audio render(std::vector<Event> events, int frames, int rate, float split, float drive, float tight,
+             bool verifyMasks = false)
+{
+    std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) { return a.sample < b.sample; });
+    dropforge::Engine engine;
+    engine.setLayersEnabled(true, true);
+    engine.setBassParameters(split, drive); engine.setRhythmParameters(drive, tight); engine.prepare(rate);
+    std::array<dropforge::Engine, 3> isolated;
+    if (verifyMasks)
+        for (auto& copy : isolated)
+        {
+            copy.setLayersEnabled(true, true);
+            copy.setBassParameters(split, drive); copy.setRhythmParameters(drive, tight); copy.prepare(rate);
+        }
+    Audio audio{std::vector<float>(frames), std::vector<float>(frames), std::vector<float>(frames)};
+    std::array<float, 512> mixedLeft{}, mixedRight{};
+    std::size_t event = 0;
+    for (int at = 0; at < frames;)
+    {
+        while (event < events.size() && events[event].sample == at)
+        {
+            const auto& e = events[event++];
+            if (e.kind == 0) engine.noteOn(e.channel, e.note, e.value);
+            else if (e.kind == 1) engine.noteOff(e.channel, e.note);
+            else if (e.kind == 2) engine.pitchBend(e.channel, e.value);
+            if (verifyMasks)
+                for (auto& copy : isolated)
+                {
+                    if (e.kind == 0) copy.noteOn(e.channel, e.note, e.value);
+                    else if (e.kind == 1) copy.noteOff(e.channel, e.note);
+                    else if (e.kind == 2) copy.pitchBend(e.channel, e.value);
+                }
+            // CC64 deliberately ignored, matching the live MIDI bridge.
+        }
+        const auto next = event < events.size() ? events[event].sample : frames;
+        const auto count = std::min({512, frames - at, next - at});
+        engine.process(mixedLeft.data(), mixedRight.data(), count, dropforge::LayerMask::both,
+                       {audio.bass.data() + at, nullptr, audio.left.data() + at, audio.right.data() + at});
+        if (verifyMasks)
+        {
+            std::array<std::array<float, 512>, 6> masked{};
+            for (std::size_t i = 0; i < isolated.size(); ++i)
+                isolated[i].process(masked[i * 2].data(), masked[i * 2 + 1].data(), count,
+                                    static_cast<dropforge::LayerMask>(i));
+            for (int i = 0; i < count; ++i)
+            {
+                const auto index = static_cast<std::size_t>(i);
+                const auto tap = static_cast<std::size_t>(at + i);
+                const float bass = masked[2][index], left = masked[4][index], right = masked[5][index];
+                const auto error = std::max(std::abs(static_cast<double>(mixedLeft[index]) - (bass + left)),
+                                            std::abs(static_cast<double>(mixedRight[index]) - (bass + right)));
+                reconstructionError = std::max(reconstructionError, error);
+                if (!std::isfinite(error) || error != 0.0 || masked[0][index] != 0.0f || masked[1][index] != 0.0f
+                    || bass != masked[3][index] || bass != audio.bass[tap]
+                    || left != audio.left[tap] || right != audio.right[tap])
+                    throw std::runtime_error("Both masks/taps must reconstruct exactly with centered bass and silent None");
+            }
+        }
+        at += count;
+    }
+    if (verifyMasks) ++isolatedFixtures;
+    return audio;
+}
+juce::Array<juce::var> rows;
+int failures = 0;
+void check(const juce::String& id, const Audio& audio, int rate, float split, float drive, float tight)
+{
+    const auto m = dsp_core::test::measure(audio.left, audio.right, audio.bass, rate, split);
+    // Below -90 dBFS the bass band is effectively silent: retain absolute
+    // rhythm-floor evidence instead of dividing by a near-zero reference.
+    const bool lowPass = m.lowBassDbfs > -90.0 ? m.separationDb <= -20.0 : m.lowRhythmDbfs <= -90.0;
+    const bool widthPass = m.correlation >= 0.0 && m.correlation <= 0.5;
+    const bool foldPass = m.foldLossDb <= 3.0;
+    const bool pass = widthPass && foldPass && lowPass && m.stereoPower > 1.0e-12;
+    auto row = std::make_unique<juce::DynamicObject>();
+    row->setProperty("id", id); row->setProperty("sample_rate", rate); row->setProperty("split", split);
+    row->setProperty("drive", drive); row->setProperty("tight", tight);
+    row->setProperty("correlation", m.correlation); row->setProperty("fold_loss_db", m.foldLossDb);
+    row->setProperty("low_rhythm_dbfs", m.lowRhythmDbfs); row->setProperty("low_bass_dbfs", m.lowBassDbfs);
+    row->setProperty("rhythm_vs_bass_low_db", m.separationDb); row->setProperty("passed", pass);
+    row->setProperty("width_passed", widthPass); row->setProperty("low_passed", lowPass);
+    row->setProperty("window", id.startsWith("hold-") ? "settled_hann_10s" : "complete_fixture");
+    row->setProperty("fold_band_dbfs", m.foldBandDbfs); row->setProperty("fold_passed", foldPass);
+    rows.add(juce::var(row.release()));
+    std::cout << id << " rate=" << rate << " split=" << split << " drive=" << drive << " tight=" << tight
+              << " correlation=" << m.correlation << " fold_loss_db=" << m.foldLossDb
+              << " low_ratio_db=" << m.separationDb << " low_bass_dbfs=" << m.lowBassDbfs
+              << " fold_band_dbfs=" << m.foldBandDbfs
+              << " pass=" << pass << std::endl;
+    if (!pass) ++failures;
+}
+void fixtures(const juce::File& file, int rate, float split, float drive, float tight)
+{
+    const auto specification = juce::JSON::parse(file.loadFileAsString());
+    const auto* sequences = specification["sequences"].getArray();
+    if (!sequences || sequences->size() != 5) throw std::runtime_error("five standard fixtures required");
+    const auto samplesPerBeat = rate * 60.0 / static_cast<double>(specification["tempo_bpm"]);
+    for (const auto& sequence : *sequences)
+    {
+        std::vector<Event> events;
+        for (const auto& note : *sequence["notes"].getArray())
+        {
+            const auto at = static_cast<double>(note[0]), duration = static_cast<double>(note[1]);
+            const auto channel = static_cast<int>(note[2]), pitch = static_cast<int>(note[3]);
+            events.push_back({static_cast<int>(std::llround(at * samplesPerBeat)), 0, channel, pitch, static_cast<int>(note[4])});
+            events.push_back({static_cast<int>(std::llround((at + duration) * samplesPerBeat)), 1, channel, pitch, 0});
+        }
+        if (const auto* bends = sequence["bends"].getArray())
+            for (const auto& bend : *bends)
+                events.push_back({static_cast<int>(std::llround(static_cast<double>(bend[0]) * samplesPerBeat)),
+                                  2, static_cast<int>(bend[1]), 0, static_cast<int>(bend[2])});
+        const auto frames = static_cast<int>(std::llround(static_cast<double>(sequence["length_beats"]) * samplesPerBeat + rate * 0.1));
+        check(sequence["id"].toString(), render(events, frames, rate, split, drive, tight, true), rate, split, drive, tight);
+    }
+}
+void settledWindow(Audio& audio, int rate)
+{
+    // Integrate ten settled seconds, suppressing artificial LF leakage from
+    // non-integer periods; RMS normalization preserves stationary power.
+    for (auto* side : {&audio.left, &audio.right, &audio.bass})
+    {
+        *side = std::vector<float>(side->begin() + rate * 2, side->end());
+        for (std::size_t i = 0; i < side->size(); ++i)
+            (*side)[i] *= static_cast<float>(std::sqrt(8.0 / 3.0) * 0.5
+                * (1.0 - std::cos(6.28318530717958647692 * i / side->size())));
+    }
+}
+void holds(int rate, float split, float drive, float tight)
+{
+    for (const auto& notes : {std::vector<int>{0}, {12}, {24}, {36}, {45}, {48}, {52}, {60}, {69}, {96}, {127},
+                            {28, 35, 40}, {40, 47, 52}, {52, 57, 60}, {24,31,36,40,43,48,52,55}})
+    {
+        std::vector<Event> events;
+        juce::String id = "hold";
+        for (auto note : notes) { events.push_back({0, 0, 1, note, 127}); id += "-" + juce::String(note); }
+        auto audio = render(events, rate * 12, rate, split, drive, tight);
+        settledWindow(audio, rate);
+        check(id, audio, rate, split, drive, tight);
+    }
+}
+}
+int main(int argc, char** argv)
+{
+    if (argc == 2 && juce::String(argv[1]) == "--highest-drive-note")
+    {
+        for (float tight : {0.0f, 1.0f})
+        {
+            auto audio = render({{0, 0, 1, 127, 127}}, 48000 * 12, 48000, 250.0f, 1.0f, tight);
+            settledWindow(audio, 48000);
+            check("hold-127", audio, 48000, 250.0f, 1.0f, tight);
+        }
+        return failures ? 1 : 0;
+    }
+    if (argc != 3) return 2;
+    const juce::File output(argv[2]);
+    if (!output.replaceWithText("{\"passed\":false}")) return 2;
+    for (int rate : {44100, 48000, 88200, 96000, 176400, 192000})
+    {
+        fixtures(juce::File(argv[1]), rate, 140, 0.5f, 0.5f);
+        holds(rate, 140, 0.5f, 0.5f);
+    }
+    for (float split : {80.0f, 250.0f})
+        for (float drive : {0.0f, 1.0f})
+            for (float tight : {0.0f, 1.0f})
+            {
+                fixtures(juce::File(argv[1]), 48000, split, drive, tight);
+                holds(48000, split, drive, tight);
+            }
+    auto result = std::make_unique<juce::DynamicObject>();
+    result->setProperty("schema_version", 1); result->setProperty("source_commit", DROPFORGE_COMMIT);
+    result->setProperty("source_dirty", DROPFORGE_DIRTY); result->setProperty("passed", failures == 0);
+    result->setProperty("routing", "both_lowest_root");
+    result->setProperty("isolated_fixtures", isolatedFixtures);
+    result->setProperty("max_reconstruction_error", reconstructionError);
+    result->setProperty("cases", juce::var(rows));
+    if (!output.replaceWithText(juce::JSON::toString(juce::var(result.release())))) return 2;
+    std::cout << "Both isolated_fixtures=" << isolatedFixtures
+              << " max_reconstruction_error=" << reconstructionError << " matrix_cases=" << rows.size() << '\n';
+    return failures ? 1 : 0;
+}

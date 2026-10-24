@@ -1,0 +1,20 @@
+Dropforge project permissions
+Copyright (c) 2026 Hugo Cacciatori. All rights reserved except as stated below.
+
+You may use the official compiled Dropforge plugin and Standalone application
+free of charge for personal and commercial music creation, performance and
+production, and make installation and backup copies for your own use.
+This permission places no restrictions on audio or MIDI you create with it.
+
+No permission is granted to modify or redistribute Dropforge project source
+code. Other rights in the project's own software are reserved; this is not an
+open-source license. Public source visibility does not grant additional rights.
+
+Third-party components retain their own licenses and permissions. This notice
+does not restrict rights those licenses or applicable law independently grant.
+See the licenses folder in binary packages and packaging/licenses in source.
+
+The software is provided "AS IS", without warranties of any kind, express or
+implied, including merchantability, fitness for a particular purpose and
+noninfringement. To the extent permitted by law, the copyright owner is not
+liable for claims, damages or other liability arising from use of the software.

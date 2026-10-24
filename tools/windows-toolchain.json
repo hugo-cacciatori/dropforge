@@ -1,0 +1,37 @@
+{
+  "cmake": {
+    "version": "4.4.4",
+    "archive": "cmake-4.4.4-windows-x86_64.zip",
+    "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip",
+    "sha256": "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536",
+    "verification": "Official release asset digest"
+  },
+  "pluginval": {
+    "version": "1.0.4",
+    "archive": "pluginval-1.0.4-Windows.zip",
+    "url": "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip",
+    "sha256": "c08e61ce3b96db41636f8ec7e76f4c7e2c13ebdac7fa1b5a1f52b4f32ec715ab",
+    "verification": "Locally recorded hash from official tagged release; no publisher digest, executable unsigned"
+  },
+  "ninja": {
+    "version": "1.13.2",
+    "archive": "ninja-win-1.13.2.zip",
+    "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+    "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+    "verification": "Official release asset digest; optional, fetched only with -WithNinja"
+  },
+  "visualStudio": {
+    "version": "17.14.37806.7",
+    "edition": "Community 2022",
+    "toolset": "14.44",
+    "observedCompilerVersion": "19.44.35229.0",
+    "observedToolsDirectory": "14.44.35207",
+    "observedSdkVersion": "10.0.26100.0",
+    "archive": "vs_community_2022.exe",
+    "url": "https://download.visualstudio.microsoft.com/download/pr/c95450be-0a45-4779-b142-33f567ccfd6e/e38048c45811bed66da5315aa921573a0b01cadaeb5f82b3aa183b8ad497e58b/vs_Community.exe",
+    "sha256": "e38048c45811bed66da5315aa921573a0b01cadaeb5f82b3aa183b8ad497e58b",
+    "verification": "Valid Microsoft Corporation Authenticode signature and recorded SHA-256",
+    "installPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
+    "components": "windows.vsconfig"
+  }
+}

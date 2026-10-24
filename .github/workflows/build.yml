@@ -1,0 +1,48 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    # Standard free runners for public repositories only; never a paid runner.
+    if: github.event.repository.private == false
+    name: windows-x64
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1, MIT
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: cmake -S . -B build/ci -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/ci --config Release --parallel 4
+      - name: Test (headless)
+        run: ctest --test-dir build/ci -C Release --output-on-failure --timeout 1500 -j 4
+      - name: pluginval strictness 5 (hidden, no GUI tests)
+        run: |
+          ./tools/setup-windows.ps1
+          ./tools/check-plugin.ps1 -PluginPath build/ci/Dropforge_artefacts/Release/VST3/Dropforge.vst3
+      - name: Upload build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, MIT
+        with:
+          name: Dropforge-windows-x64-${{ github.sha }}
+          path: |
+            build/ci/Dropforge_artefacts/Release/VST3/
+            build/ci/Dropforge_artefacts/Release/Standalone/Dropforge.exe
+          if-no-files-found: error
+          retention-days: 3
