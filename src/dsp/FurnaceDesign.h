@@ -17,6 +17,8 @@ struct FurnaceDesign
     dsp_core::MultibandDynamics::Settings dynamics{};
     // Output trim so every mode lands within 1 LU of A (SPEC section 12).
     float levelGain = 1.0f;
+    // Final side blend; the accepted 0.84 unless a mode needs more width.
+    double sideGain = RhythmOscillators::spread;
 
     // A: the balanced wall. Starting dynamics come from the measured post-drive
     // band peaks of typical voicings (about -14 dB low, -9 dB mid, -13 dB
@@ -62,13 +64,33 @@ struct FurnaceDesign
         design.levelGain = 0.91201083935590974f;
         return design;
     }
-    // 'a', 'b' or 'c' (either case); anything else is candidate A.
+    // D Alloy: the FM wall (SPEC section 12). Glassy and metallic but
+    // harmonic: sine carriers modulated 1:1 and 2:1, detuned per side like
+    // the saws but a little narrower (FM detune beats harder), a saw octave for
+    // air, no square body (the FM core already has the mids), a touch more
+    // contour and a little less air than A, A's dynamics.
+    static FurnaceDesign candidateD() noexcept
+    {
+        auto design = candidateA();
+        design.voice = {30.0, -8.0, 12.0, -60.0, 1.8, 0.7};
+        design.contourDb = 4.0;
+        design.airDb = 2.0;
+        // Sine-based stacks carry less upper energy than saws: +1.8 dB to
+        // land within 1 LU of A (+1.2 dB with the wider side blend below).
+        design.levelGain = 1.1481536214968828f;
+        // A sine-based tone keeps more energy low, where the image is mono:
+        // a stronger side blend restores A's width on low riffs.
+        design.sideGain = 0.94;
+        return design;
+    }
+    // 'a' to 'd' (either case); anything else is candidate A.
     static FurnaceDesign candidate(char letter) noexcept
     {
         switch (letter)
         {
             case 'b': case 'B': return candidateB();
             case 'c': case 'C': return candidateC();
+            case 'd': case 'D': return candidateD();
             default: return candidateA();
         }
     }

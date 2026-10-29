@@ -24,27 +24,30 @@ int main(int argc, char** argv)
     using Clock = std::chrono::steady_clock;
     constexpr int trials = 5, maximumBlockSize = 8192;
     int blockSize = 512, sampleRate = 48000;
-    bool haveRate = false, haveBlock = false, haveAnvil = false;
-    auto grit = dropforge::AnvilGrit::a;
+    bool haveRate = false, haveBlock = false, haveAnvil = false, haveFurnace = false;
+    int anvilMode = 0, furnaceMode = 0;
+    // A single letter a-d names a mode (SPEC section 12); -1 otherwise.
+    const auto modeLetter = [](std::string_view text) noexcept
+    {
+        return text.size() == 1 && text[0] >= 'a' && text[0] <= 'd' ? text[0] - 'a' : -1;
+    };
     for (int i = 1; i < argc; i += 2)
     {
         const std::string_view option = argv[i];
         if (i + 1 >= argc
-            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil")
+            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil" && option != "--furnace")
             || (option == "--sample-rate" && (haveRate || !readInteger(argv[i + 1], sampleRate)))
             || (option == "--block-size" && (haveBlock || !readInteger(argv[i + 1], blockSize)))
-            || (option == "--anvil" && (haveAnvil || (std::string_view(argv[i + 1]) != "a" && std::string_view(argv[i + 1]) != "b"))))
+            || (option == "--anvil" && (haveAnvil || modeLetter(argv[i + 1]) < 0))
+            || (option == "--furnace" && (haveFurnace || modeLetter(argv[i + 1]) < 0)))
         {
-            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a|b]\n";
+            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a-d] [--furnace a-d]\n";
             return 2;
         }
         if (option == "--sample-rate") haveRate = true;
         else if (option == "--block-size") haveBlock = true;
-        else
-        {
-            haveAnvil = true;
-            grit = std::string_view(argv[i + 1]) == "b" ? dropforge::AnvilGrit::b : dropforge::AnvilGrit::a;
-        }
+        else if (option == "--anvil") { haveAnvil = true; anvilMode = modeLetter(argv[i + 1]); }
+        else { haveFurnace = true; furnaceMode = modeLetter(argv[i + 1]); }
     }
     if (sampleRate < 44100 || sampleRate > 192000 || blockSize < 1 || blockSize > maximumBlockSize)
     {
@@ -66,7 +69,8 @@ int main(int argc, char** argv)
         dropforge::Engine engine;
         dropforge::Master master; // the full instrument: voices plus master chain
         engine.setLayersEnabled(true, true);
-        engine.setAnvilGrit(grit);
+        engine.setAnvilMode(anvilMode);
+        engine.setFurnaceMode(furnaceMode);
         engine.prepare(rate);
         master.prepare(rate);
         engine.setBassParameters(140.0f, 1.0f);

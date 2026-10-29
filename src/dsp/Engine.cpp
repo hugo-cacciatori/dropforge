@@ -7,17 +7,18 @@ namespace dropforge
 {
 namespace
 {
-// Mode letters to designs. Modes not built yet play A (SPEC section 12, M1.7).
+// Mode letters to designs (SPEC section 12).
 FurnaceDesign furnaceForMode(int mode) noexcept
 {
     switch (mode)
     {
         case 1: return FurnaceDesign::candidateB();
         case 2: return FurnaceDesign::candidateC();
+        case 3: return FurnaceDesign::candidateD();
         default: return FurnaceDesign::candidateA();
     }
 }
-AnvilGrit gritForMode(int mode) noexcept { return mode == 1 ? AnvilGrit::b : AnvilGrit::a; }
+AnvilGrit gritForMode(int mode) noexcept { return static_cast<AnvilGrit>(std::clamp(mode, 0, 3)); }
 }
 
 void Engine::prepare(double sampleRate) noexcept

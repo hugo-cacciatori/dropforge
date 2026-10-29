@@ -185,7 +185,7 @@ int main(int argc, char** argv)
         holds(rate == 192000 ? edgeHolds : allHolds, rate, 140, 0.5f, 0.5f);
     }
     // Every round-1 candidate passes the same gates at the default rate.
-    for (const char other : {'b', 'c'})
+    for (const char other : {'b', 'c', 'd'})
     {
         candidate = other;
         fixtures(juce::File(argv[1]), 48000, 140, 0.5f, 0.5f, false);

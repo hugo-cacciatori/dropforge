@@ -196,7 +196,7 @@ public:
             // Mono below about 150 Hz: chords stay solid on a club system or a
             // phone speaker, and the side signal never fights Anvil.
             const auto mid = 0.5f * (processedLeft + processedRight);
-            const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(RhythmOscillators::spread);
+            const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(design.sideGain);
             // Both sides share one envelope and velocity, so one gain gates both,
             // after every filter: the chop stays dead-stop hard.
             const auto gain = buses[0].gain() * design.levelGain;
