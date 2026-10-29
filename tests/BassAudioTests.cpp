@@ -163,7 +163,7 @@ void branchMeasurements()
             std::complex<double> firResponse{};
             for (std::size_t i = 0; i < fir.coefficients().size(); ++i)
                 firResponse += fir.coefficients()[i] * std::polar(1.0, -2.0 * pi * hz * static_cast<double>(i) / (rate * 4.0));
-            // At zero Destruction both source paths coincide; a normalized
+            // At zero drive both source paths coincide; a normalized
             // mix retains their original linear gain and phase.
             const auto expectedUpper = static_cast<double>(dropforge::BassVoice::richGain) * coefficient(rawRich, hz, rate)
                 * hp * hp * hp * hp * firResponse * firResponse
@@ -386,7 +386,7 @@ void drivenBassTests(dropforge::AnvilGrit grit)
                         "new parameter targets start at current values without a sample discontinuity");
             }
             const auto actual = changed.next(1.0), clean = reference.next(1.0);
-            require(actual.sine == clean.sine, "Split/Destruction automation leaves clean sine bit-exact");
+            require(actual.sine == clean.sine, "Split/drive automation leaves clean sine bit-exact");
             require(std::isfinite(actual.output) && std::fpclassify(actual.output) != FP_SUBNORMAL && std::abs(actual.output) < 0.3,
                     "driven/automated bass remains bounded finite and normal");
             const auto residual = actual.output - clean.output;
@@ -575,17 +575,19 @@ void injectedDriveAliasEvidence()
 // measured on the real voice: everything that is not a harmonic of the
 // played pitch is alias or noise. D's two detuned saws are not periodic, so
 // it is checked for its band limit through a measuring high-pass instead.
-void modeCandidate(dropforge::AnvilGrit grit)
+void modeCandidate(dropforge::AnvilGrit grit, bool destroyed = false)
 {
     using dropforge::AnvilGrit;
-    const auto name = grit == AnvilGrit::b ? "growl" : grit == AnvilGrit::c ? "round" : "reese";
+    const auto name = grit == AnvilGrit::b ? (destroyed ? "destroyed_growl" : "growl")
+                    : grit == AnvilGrit::c ? (destroyed ? "destroyed_round" : "round")
+                    : (destroyed ? "destroyed_reese" : "reese");
     double worstAliasDb = -1000.0, worstTopDb = -1000.0;
     for (const auto rate : {44100, 48000, 96000})
         for (const auto hz : {41.203, 110.0, 261.626})
             for (const auto amount : {0.0, 1.0})
             {
                 dropforge::BassVoice growl, harmonic;
-                growl.setGrit(grit);
+                growl.setMode(grit, destroyed);
                 for (auto* voice : {&growl, &harmonic})
                 {
                     voice->prepare(rate); voice->setParameters(140.0, amount);
@@ -687,5 +689,6 @@ int main()
     }
     harmonicGritTexture();
     injectedDriveAliasEvidence();
-    for (const auto grit : {AnvilGrit::b, AnvilGrit::c, AnvilGrit::d}) modeCandidate(grit);
+    for (const auto grit : {AnvilGrit::b, AnvilGrit::c, AnvilGrit::d})
+        for (const auto destroyed : {false, true}) modeCandidate(grit, destroyed);
 }

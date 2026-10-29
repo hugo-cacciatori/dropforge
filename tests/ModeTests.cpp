@@ -264,6 +264,91 @@ void monoAndDrop()
 }
 }
 
+// Destruction (SPEC section 12): each mode's extreme version stays near its
+// clean loudness, leaves Anvil's sine alone and switches without a click.
+void destruction()
+{
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        const auto measure = [mode](bool destroy, LayerMask mask)
+        {
+            Engine engine;
+            engine.setAnvilMode(mode); engine.setFurnaceMode(mode);
+            engine.setAnvilDestruction(destroy); engine.setFurnaceDestruction(destroy);
+            engine.prepare(48000.0);
+            play(engine);
+            return loudness(render(engine, 4 * 48000, 512, mask));
+        };
+        const auto furnace = measure(true, LayerMask::rhythm) - measure(false, LayerMask::rhythm);
+        const auto anvil = measure(true, LayerMask::bass) - measure(false, LayerMask::bass);
+        std::cout << "mode=" << static_cast<char>('A' + mode) << " destroyed_furnace_lu=" << furnace
+                  << " destroyed_anvil_lu=" << anvil << '\n';
+        require(furnace <= 1.0 && furnace >= -1.5, "destroyed Furnace stays within +1/-1.5 LU of its clean mode");
+        require(anvil <= 1.0 && anvil >= -1.5, "destroyed Anvil stays within +1/-1.5 LU of its clean mode");
+        dropforge::BassVoice clean, destroyed;
+        clean.setMode(static_cast<dropforge::AnvilGrit>(mode), false);
+        destroyed.setMode(static_cast<dropforge::AnvilGrit>(mode), true);
+        for (auto* voice : {&clean, &destroyed}) { voice->prepare(48000.0); voice->start(41.203, 127); }
+        for (int i = 0; i < 24000; ++i)
+            require(clean.next(1.0).sine == destroyed.next(1.0).sine, "Destruction leaves Anvil's clean sine bit-exact");
+    }
+    // Every mode combination with both instruments destroyed, Levels +6 dB.
+    float worst = 0.0f;
+    for (int anvil = 0; anvil < 4; ++anvil)
+        for (int furnace = 0; furnace < 4; ++furnace)
+        {
+            dropforge::InstrumentCore core;
+            core.setLayerLevels(6.0f, 6.0f);
+            core.setModes(anvil, furnace);
+            core.setDestruction(true, true);
+            core.prepare(48000.0);
+            for (const auto note : {28, 40, 47, 52, 55, 59, 64, 71})
+            {
+                const std::uint8_t on[]{0x90, static_cast<std::uint8_t>(note), 127};
+                core.midi(on, 3);
+            }
+            std::vector<float> left(24000), right(24000), bassLeft(24000), bassRight(24000);
+            core.process(left.data(), right.data(), 24000, LayerMask::both, {bassLeft.data(), bassRight.data(), nullptr, nullptr});
+            require(bassLeft == bassRight, "destroyed Anvil stays exactly mono");
+            for (std::size_t i = 0; i < left.size(); ++i)
+            {
+                require(std::isfinite(left[i]) && std::isfinite(right[i]), "destroyed combinations are finite");
+                worst = std::max({worst, std::abs(left[i]), std::abs(right[i])});
+            }
+        }
+    require(worst <= dropforge::Master::ceiling, "destroyed combinations stay under -1 dBFS");
+    // Switching Destruction under a held chord: click-free, block-invariant.
+    float natural = 0.0f;
+    for (const auto destroy : {false, true})
+    {
+        Engine steady;
+        steady.setAnvilDestruction(destroy); steady.setFurnaceDestruction(destroy);
+        steady.prepare(48000.0);
+        play(steady);
+        const auto audio = render(steady, 24000, 512);
+        natural = std::max(natural, largestStep(audio, 12000, 24000));
+    }
+    const auto run = [](int block)
+    {
+        Engine engine;
+        engine.prepare(48000.0);
+        play(engine);
+        auto audio = render(engine, 12000, block);
+        engine.setAnvilDestruction(true);
+        engine.setFurnaceDestruction(true);
+        const auto after = render(engine, 12000, block);
+        audio.left.insert(audio.left.end(), after.left.begin(), after.left.end());
+        audio.right.insert(audio.right.end(), after.right.begin(), after.right.end());
+        return audio;
+    };
+    const auto a = run(512), b = run(1), c = run(73);
+    require(a.left == b.left && a.right == c.right, "Destruction switches render identically at blocks 1, 73 and 512");
+    const auto step = largestStep(a, 11900, 14000);
+    std::cout << "destruction_switch_step=" << step << " natural_step=" << natural << " worst_destroyed_peak_dbfs="
+              << 20.0 * std::log10(worst) << '\n';
+    require(step <= 1.1f * natural, "switching Destruction under a held chord does not click");
+}
+
 int main()
 {
     silentSwitchIsImmediate();
@@ -271,4 +356,5 @@ int main()
     loudnessMatched();
     everyCombination();
     monoAndDrop();
+    destruction();
 }

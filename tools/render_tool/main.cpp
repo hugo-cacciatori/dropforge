@@ -18,14 +18,14 @@ struct Options
     int rate = 48000, block = 512;
     double tail = 0.1;
     float outputDb = 0.0f, anvilLevelDb = 0.0f;
-    float splitHz = 140.0f, destruction = 0.5f;
+    float splitHz = 140.0f, drive = 0.5f;
     bool bassEnabled = true, rhythmEnabled = true;
     dropforge::LayerMask mask = dropforge::LayerMask::both;
     std::string maskName = "both";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
     std::string componentName = "all";
     std::string furnace = "a", anvil = "a";
-    bool furnaceMono = false, furnaceDrop = false;
+    bool furnaceMono = false, furnaceDrop = false, anvilDestroy = false, furnaceDestroy = false;
 };
 
 double number(const char* text)
@@ -74,13 +74,15 @@ Options parse(int argc, char** argv)
         }
         else if (flag == "--furnace-mono") options.furnaceMono = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--furnace-drop") options.furnaceDrop = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--anvil-destroy") options.anvilDestroy = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--furnace-destroy") options.furnaceDestroy = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--anvil-level-db")
         {
             const auto db = number(argv[i + 1]);
             if (db < -60.0 || db > 6.0) throw std::runtime_error("Anvil Level must be -60 to +6 dB");
             options.anvilLevelDb = static_cast<float>(db);
         }
-        else if (flag == "--split-hz" || flag == "--destruction")
+        else if (flag == "--split-hz" || flag == "--drive")
         {
             const auto value = number(argv[i + 1]);
             if (flag == "--split-hz")
@@ -90,8 +92,8 @@ Options parse(int argc, char** argv)
             }
             else
             {
-                if (value < 0.0 || value > 1.0) throw std::runtime_error("Destruction must be 0 to 1");
-                options.destruction = static_cast<float>(value);
+                if (value < 0.0 || value > 1.0) throw std::runtime_error("Drive must be 0 to 1");
+                options.drive = static_cast<float>(value);
             }
         }
         else if (flag == "--bass-component")
@@ -198,8 +200,9 @@ void render(const Options& options)
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
     core.setModes(options.anvil[0] - 'a', options.furnace[0] - 'a');
     core.setFurnaceOptions(options.furnaceMono, options.furnaceDrop);
+    core.setDestruction(options.anvilDestroy, options.furnaceDestroy);
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
-    core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
+    core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
     std::size_t nextEvent = 0;
@@ -251,10 +254,12 @@ void render(const Options& options)
     metrics->setProperty("anvil", juce::String(options.anvil));
     metrics->setProperty("furnace_mono", options.furnaceMono);
     metrics->setProperty("furnace_drop", options.furnaceDrop);
+    metrics->setProperty("anvil_destroy", options.anvilDestroy);
+    metrics->setProperty("furnace_destroy", options.furnaceDestroy);
     metrics->setProperty("anvil_level_db", options.anvilLevelDb);
     metrics->setProperty("bass_component", juce::String(options.componentName));
     metrics->setProperty("split_hz", options.splitHz);
-    metrics->setProperty("destruction", options.destruction);
+    metrics->setProperty("drive", options.drive);
     metrics->setProperty("bass_enabled", options.bassEnabled);
     metrics->setProperty("rhythm_enabled", options.rhythmEnabled);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
@@ -285,13 +290,14 @@ int main(int argc, char** argv)
     if (argc == 2 && std::string(argv[1]) == "--help")
     {
         std::cout << "render_tool input.mid output.wav metrics.json [--sample-rate 48000] [--block-size 512]\n"
-                     "  [--output-db 0] [--tail-seconds 0.1] [--split-hz 140] [--destruction 0.5]\n"
+                     "  [--output-db 0] [--tail-seconds 0.1] [--split-hz 140] [--drive 0.5]\n"
                      "  [--layer-mask both|bass|rhythm|none] (diagnostic output mask, not a playing mode)\n"
                      "  [--bass-component all|clean|grit|dry-grit|unison-grit] (diagnostic isolation, same final filter/envelope)\n"
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
                      "  [--furnace a|b|c|d] (Furnace mode; default a)\n"
                      "  [--anvil a|b|c|d] (Anvil mode; default a)\n"
                      "  [--furnace-mono 0|1] [--furnace-drop 0|1] (Furnace options; default 0)\n"
+                     "  [--anvil-destroy 0|1] [--furnace-destroy 0|1] (Destruction; default 0)\n"
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;

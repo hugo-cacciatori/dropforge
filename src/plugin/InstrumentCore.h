@@ -20,20 +20,20 @@ public:
     // master gain reductions since the last takeMeters().
     struct Meters { float peakLeft = 0.0f, peakRight = 0.0f, glueReductionDb = 0.0f, limiterReductionDb = 0.0f; };
 
-    void prepare(double sampleRate, float outputDb = 0.0f, float splitHz = 140.0f, float destruction = 0.5f) noexcept
+    void prepare(double sampleRate, float outputDb = 0.0f, float splitHz = 140.0f, float drive = 0.5f) noexcept
     {
         engine.prepare(sampleRate);
-        engine.setBassParameters(splitHz, destruction);
-        engine.setRhythmParameters(destruction);
+        engine.setBassParameters(splitHz, drive);
+        engine.setRhythmParameters(drive);
         engine.reset();
         master.prepare(sampleRate);
         output.prepare(sampleRate, outputDb);
         meters = {};
     }
-    void reset(float outputDb, float splitHz = 140.0f, float destruction = 0.5f) noexcept
+    void reset(float outputDb, float splitHz = 140.0f, float drive = 0.5f) noexcept
     {
-        engine.setBassParameters(splitHz, destruction);
-        engine.setRhythmParameters(destruction);
+        engine.setBassParameters(splitHz, drive);
+        engine.setRhythmParameters(drive);
         engine.reset();
         master.reset();
         output.reset(outputDb);
@@ -47,6 +47,12 @@ public:
         engine.setAnvilMode(anvil);
         engine.setFurnaceMode(furnace);
     }
+    // Destruction per instrument (SPEC section 12); crossfades like a mode.
+    void setDestruction(bool anvil, bool furnace) noexcept
+    {
+        engine.setAnvilDestruction(anvil);
+        engine.setFurnaceDestruction(furnace);
+    }
     // Furnace Mono and Drop (SPEC section 3); real-time safe, click-free.
     void setFurnaceOptions(bool mono, bool drop) noexcept
     {
@@ -58,10 +64,10 @@ public:
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }
     // Diagnostic voicing for renders and tests. The plugin keeps the fixed
     // 140 Hz split and 0.5 drive the owner chose; it never calls this.
-    void setBassParameters(float splitHz, float destruction) noexcept
+    void setBassParameters(float splitHz, float drive) noexcept
     {
-        engine.setBassParameters(splitHz, destruction);
-        engine.setRhythmParameters(destruction);
+        engine.setBassParameters(splitHz, drive);
+        engine.setRhythmParameters(drive);
     }
     void panic() noexcept
     {

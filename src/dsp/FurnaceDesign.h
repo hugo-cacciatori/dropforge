@@ -19,6 +19,11 @@ struct FurnaceDesign
     float levelGain = 1.0f;
     // Final side blend; the accepted 0.84 unless a mode needs more width.
     double sideGain = RhythmOscillators::spread;
+    // Low-mid dip at 300 Hz, wavefolder after the drive (0 = none) and the
+    // top hash low-pass: the tone stages Destruction re-tunes per mode.
+    double lowMidDb = -2.0;
+    float foldAmount = 0.0f;
+    double hashHz = 18000.0;
 
     // A: the balanced wall. Starting dynamics come from the measured post-drive
     // band peaks of typical voicings (about -14 dB low, -9 dB mid, -13 dB
@@ -82,6 +87,64 @@ struct FurnaceDesign
         // a stronger side blend restores A's width on low riffs.
         design.sideGain = 0.94;
         return design;
+    }
+    // Destruction (SPEC section 12): a more extreme version of each mode,
+    // with the adjustment its voicing needs to stay usable.
+    static FurnaceDesign destroyed(int mode) noexcept
+    {
+        switch (mode)
+        {
+            case 1:
+            {
+                // B: a wavefolder after a harder drive; less air and a 14 kHz
+                // top so the folded harmonics never turn to fizz.
+                auto design = candidateB();
+                design.drivePushDb = 7.0f;
+                design.foldAmount = 0.6f;
+                design.airDb = 2.0;
+                design.hashHz = 14000.0;
+                design.levelGain = 1.1220184543019633f; // +1.0 dB: the squeeze costs loudness
+                return design;
+            }
+            case 2:
+            {
+                // C: the supersaw overdriven into heavy compression; the
+                // octave stack turned down so the top never shrieks.
+                auto design = candidateC();
+                design.drivePushDb = 5.0f;
+                design.voice.octaveDb = -9.0;
+                design.dynamics.band[1] = {-18.0f, 5.0f, -24.0f, 3.0f, 14.0f, 2.0f};
+                design.dynamics.band[2] = {-8.0f, 4.0f, -14.0f, 3.0f, 12.0f, 0.0f};
+                design.levelGain = 1.7579236139586931f; // +4.9 dB: the squeeze costs loudness
+                return design;
+            }
+            case 3:
+            {
+                // D: a much deeper FM index with more drive. The index scales
+                // down per note against aliasing, so high notes fade back
+                // toward the cleaner tone and triads stay readable.
+                auto design = candidateD();
+                design.voice.fmIndex1 = 3.2;
+                design.voice.fmIndex2 = 1.3;
+                design.drivePushDb = 4.0f;
+                design.levelGain = 1.2161860006463681f; // +1.7 dB: the squeeze costs loudness
+                return design;
+            }
+            default:
+            {
+                // A: 8 dB more drive into a deeper squeeze, more square body;
+                // a deeper low-mid dip so dense chords do not turn to mud.
+                auto design = candidateA();
+                design.drivePushDb = 8.0f;
+                design.voice.bodyDb = -10.0;
+                // The louder centred body narrows the image; widen to match A.
+                design.sideGain = 0.9;
+                design.dynamics.band[1] = {-18.0f, 5.0f, -22.0f, 3.0f, 12.0f, 2.0f};
+                design.lowMidDb = -4.5;
+                design.levelGain = 1.4962356560944334f; // +3.5 dB: the squeeze costs loudness
+                return design;
+            }
+        }
     }
     // 'a' to 'd' (either case); anything else is candidate A.
     static FurnaceDesign candidate(char letter) noexcept

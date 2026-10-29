@@ -45,7 +45,8 @@ public:
         for (auto& bus : buses)
         {
             bus.setVoicing(design.drivePushDb, design.contourDb + (drop ? dropContourDb : 0.0), design.airDb,
-                           RhythmBus::defaultLowMidDb + (drop ? dropLowMidDb : 0.0));
+                           design.lowMidDb + (drop ? dropLowMidDb : 0.0));
+            bus.setExtremes(design.foldAmount, design.hashHz);
             bus.setAnvilPresent(anvilPresent);
             bus.prepare(rate);
         }

@@ -107,7 +107,7 @@ int standardSequences(const juce::String& tool, const juce::File& build, const j
         require(metrics["layer_mask"].toString() == (bassOnly ? "bass" : "both")
                 && metrics["bass_enabled"].isBool() && static_cast<bool>(metrics["bass_enabled"])
                 && metrics["rhythm_enabled"].isBool() && static_cast<bool>(metrics["rhythm_enabled"]) == !bassOnly
-                && static_cast<double>(metrics["split_hz"]) == 140.0 && static_cast<double>(metrics["destruction"]) == 0.5
+                && static_cast<double>(metrics["split_hz"]) == 140.0 && static_cast<double>(metrics["drive"]) == 0.5
                 && static_cast<int>(metrics["latency_samples"]) == dropforge::InstrumentCore::latencySamples,
                 "render metrics identify exact diagnostic mask, bass controls and latency");
         const auto frames = static_cast<int>(std::llround(length * 60.0 / bpm * rate + tail * rate));
@@ -280,7 +280,7 @@ int main(int argc, char** argv)
                               + (rhythmEnabled ? "-g1" : "-g0");
         const auto maskedWav = root.getChildFile(stem + ".wav"), maskedJson = root.getChildFile(stem + ".json");
         require(run(argv[1], {input.getFullPathName(), maskedWav.getFullPathName(), maskedJson.getFullPathName(),
-                             "--layer-mask", name, "--split-hz", "80", "--destruction", "1", "--block-size", "73",
+                             "--layer-mask", name, "--split-hz", "80", "--drive", "1", "--block-size", "73",
                              "--bass-enabled", bassEnabled ? "1" : "0",
                              "--rhythm-enabled", rhythmEnabled ? "1" : "0", "--bass-component", setting.componentName}) == 0,
                 "all CLI masks and non-default bass settings render successfully");
@@ -322,7 +322,7 @@ int main(int argc, char** argv)
                 && recorded["bass_component"].toString() == setting.componentName
                 && recorded["bass_enabled"].isBool() && static_cast<bool>(recorded["bass_enabled"]) == bassEnabled
                 && recorded["rhythm_enabled"].isBool() && static_cast<bool>(recorded["rhythm_enabled"]) == rhythmEnabled
-                && static_cast<double>(recorded["destruction"]) == 1.0 && static_cast<int>(recorded["latency_samples"]) == dropforge::InstrumentCore::latencySamples,
+                && static_cast<double>(recorded["drive"]) == 1.0 && static_cast<int>(recorded["latency_samples"]) == dropforge::InstrumentCore::latencySamples,
                 "CLI non-default controls and diagnostic mask are recorded accurately");
     }
     require(!identical(root.getChildFile("bass-b1-g0.wav"), root.getChildFile("bass-b1-g1.wav")),
@@ -334,7 +334,7 @@ int main(int argc, char** argv)
     for (const auto& invalid : {juce::StringArray{"--sample-rate", "nan"}, juce::StringArray{"--block-size", "0"},
                                juce::StringArray{"--tail-seconds", "-1"}, juce::StringArray{"--output-db", "6.1"},
                                juce::StringArray{"--split-hz", "79"}, juce::StringArray{"--split-hz", "251"},
-                               juce::StringArray{"--destruction", "nan"}, juce::StringArray{"--destruction", "1.1"},
+                               juce::StringArray{"--drive", "nan"}, juce::StringArray{"--drive", "1.1"},
                                juce::StringArray{"--rhythm-mono", "1"},
                                juce::StringArray{"--bass-enabled", "-1"}, juce::StringArray{"--bass-enabled", "0.5"},
                                juce::StringArray{"--bass-enabled", "nan"}, juce::StringArray{"--rhythm-enabled", "2"},

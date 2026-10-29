@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -19,6 +20,10 @@ class AnvilGrowl
 public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
 
+    // Destruction (SPEC section 12): twice the folds and a hard clip, the
+    // vowel opened from "ah" toward "ae", the top lowered to 3 kHz against
+    // fizz. Takes effect at prepare().
+    void setDestroyed(bool on) noexcept { destroyed = on; }
     void prepare(double splitHz, double rate) noexcept
     {
         oversampler.prepare();
@@ -29,9 +34,9 @@ public:
         notch.set(dsp_core::Svf::Type::notch, 110.0, rate, 0.7);
         // An open "ah": first formant 700 Hz, second 1150 Hz. Roar (M2)
         // sweeps them together; until then they sit at this vowel.
-        formants[0].set(dsp_core::Svf::Type::bell, 700.0, rate, 3.0, 9.0);
-        formants[1].set(dsp_core::Svf::Type::bell, 1150.0, rate, 4.0, 6.0);
-        for (auto& filter : topLowpass) filter.set(dsp_core::Svf::Type::lowpass, 4000.0, rate);
+        formants[0].set(dsp_core::Svf::Type::bell, destroyed ? 820.0 : 700.0, rate, 3.0, 9.0);
+        formants[1].set(dsp_core::Svf::Type::bell, destroyed ? 1400.0 : 1150.0, rate, 4.0, 6.0);
+        for (auto& filter : topLowpass) filter.set(dsp_core::Svf::Type::lowpass, destroyed ? 3000.0 : 4000.0, rate);
         dsp_core::sine(0); // build the shared table off the audio thread
         reset();
     }
@@ -75,8 +80,10 @@ public:
     // Amount (Anvil's grit drive, 0..1) sets how many times the wave folds.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = 1.5f + 4.5f * amount;
-        return oversampler.next(input, [gain](float value) noexcept { return shape(gain * value); });
+        const auto gain = (1.5f + 4.5f * amount) * (destroyed ? 2.0f : 1.0f);
+        if (!destroyed) return oversampler.next(input, [gain](float value) noexcept { return shape(gain * value); });
+        // The hard clip flattens the folded peaks into a buzzing edge.
+        return oversampler.next(input, [gain](float value) noexcept { return std::clamp(1.4f * shape(gain * value), -1.0f, 1.0f); });
     }
     float cleanup(float input) noexcept
     {
@@ -109,5 +116,6 @@ private:
     dsp_core::Oversampler4xFloat oversampler;
     std::array<dsp_core::Svf, 2> preSplit{}, postSplit{}, sourceLowpass{}, topLowpass{}, formants{};
     dsp_core::Svf notch;
+    bool destroyed = false;
 };
 }

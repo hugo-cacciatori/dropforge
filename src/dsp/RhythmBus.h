@@ -35,6 +35,13 @@ public:
     static constexpr int controlInterval = 32;
 
     // The candidate's voicing (FurnaceDesign); takes effect at prepare().
+    // Destruction hooks (SPEC section 12): a wavefolder after the drive curve
+    // (0 = none) and the top hash low-pass. Take effect at prepare().
+    void setExtremes(float fold, double hashHz) noexcept
+    {
+        foldAmount = std::isfinite(fold) ? std::clamp(fold, 0.0f, 1.0f) : 0.0f;
+        hashCutoff = std::isfinite(hashHz) ? std::clamp(hashHz, 2000.0, hashLowpassHz) : hashLowpassHz;
+    }
     void setVoicing(float drivePushDb, double contour, double airShelf, double lowMid = defaultLowMidDb) noexcept
     {
         lowMidDb = std::isfinite(lowMid) ? lowMid : defaultLowMidDb;
@@ -50,7 +57,7 @@ public:
         contour.set(dsp_core::Svf::Type::bell, contourHz, rate, contourQ, contourDb);
         lowMid.set(dsp_core::Svf::Type::bell, lowMidHz, rate, lowMidQ, lowMidDb);
         air.set(dsp_core::Svf::Type::highShelf, airHz, rate, 0.7071067811865476, airDb);
-        hashLowpass.set(dsp_core::Svf::Type::lowpass, std::min(hashLowpassHz, 0.45 * rate), rate);
+        hashLowpass.set(dsp_core::Svf::Type::lowpass, std::min(hashCutoff, 0.45 * rate), rate);
         currentTight = currentSeparation = -1.0; // recompute for the new rate
         reset();
     }
@@ -94,7 +101,12 @@ public:
         lastGain = outputGain * gate * velocity;
         const auto amount = static_cast<float>(driveAmount.next());
         const auto sample = contour.next(tightFilter.next(input));
-        return oversampler.next(sample, [amount, push = drivePush](float value) noexcept { return shape(value, amount, push); });
+        if (foldAmount <= 0.0f)
+            return oversampler.next(sample, [amount, push = drivePush](float value) noexcept { return shape(value, amount, push); });
+        return oversampler.next(sample, [amount, push = drivePush, fold = foldAmount](float value) noexcept
+        {
+            return wavefold(shape(value, amount, push), fold);
+        });
     }
     float tone(float sample) noexcept
     {
@@ -124,6 +136,14 @@ public:
         const auto curved = (std::tanh(gain * value + bias) - offset) / (gain * slope);
         const auto blend = std::min(1.0f, 4.0f * amount);
         return value + blend * (curved - value);
+    }
+
+    // A sine wavefolder at unity small-signal gain, blended in by fold:
+    // loud peaks fold back down into dense, gnarly upper harmonics.
+    static float wavefold(float value, float fold) noexcept
+    {
+        constexpr float folds = 6.0f;
+        return value + fold * (std::sin(folds * value) / folds - value);
     }
 
 private:
@@ -159,7 +179,8 @@ private:
     dsp_core::Oversampler4xFloat oversampler;
     static constexpr std::array<double, 4> separationQ{0.5097955, 0.6013449, 0.8999762, 2.5629154};
     dsp_core::Svf tightFilter, contour, lowMid, air, hashLowpass;
-    double lowMidDb = defaultLowMidDb;
+    double lowMidDb = defaultLowMidDb, hashCutoff = hashLowpassHz;
+    float foldAmount = 0.0f;
     std::array<dsp_core::Svf, 4> separation{};
     dsp_core::LinearRamp tight, driveAmount, separationLog;
     dsp_core::FixedDelay<float, latencySamples> alignedGate, alignedLevel;

@@ -46,6 +46,8 @@ public:
     // Round C and reese D: set so each lands within 1 LU of grit A.
     static constexpr float roundGain = static_cast<float>(0.06 * outputTrim);
     static constexpr float reeseGain = static_cast<float>(0.04 * outputTrim);
+    // Destruction trims per mode A-D, so destroyed lands near its clean mode.
+    static constexpr std::array<float, 4> destroyedGain{1.0f, 1.0f, 1.0f, 1.0f};
     // A true dry/wet mix: changing wet share must not add an overall gain boost.
     static constexpr float unisonMix = 0.45f, dryMix = 1.0f - unisonMix;
     static_assert(dryMix + unisonMix == 1.0f, "Dry/wet mix must total 100 percent");
@@ -70,7 +72,7 @@ public:
         envelope.reset(); rich.reset(); growl.reset(); round.reset(); reese.reset(); aligned.reset(); finalLowpass.reset();
         for (auto& path : gritPaths) path.reset();
         currentNotchHz = -1.0;
-        split.reset(splitTarget); destruction.reset(destructionTarget);
+        split.reset(splitTarget); driveAmount.reset(driveAmountTarget);
         currentSplit = -1.0;
         phase = 0;
         frequency = 0.0;
@@ -80,13 +82,22 @@ public:
         pendingAttack = false;
     }
     // Not real-time: select before prepare() or between renders.
-    void setGrit(AnvilGrit candidate) noexcept { grit = candidate; reset(); }
+    void setGrit(AnvilGrit candidate) noexcept { setMode(candidate, destroyed); }
+    // Mode and Destruction (SPEC section 12); not real-time, re-prepares the
+    // filters at the current rate. The engine crossfades between voices.
+    void setMode(AnvilGrit candidate, bool destroy) noexcept
+    {
+        grit = candidate;
+        destroyed = destroy;
+        growl.setDestroyed(destroy); round.setDestroyed(destroy); reese.setDestroyed(destroy);
+        prepare(rate);
+    }
     void setParameters(double splitHz, double amount) noexcept
     {
         splitHz = std::isfinite(splitHz) ? std::clamp(splitHz, 80.0, 250.0) : 140.0;
         amount = std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 0.5;
         if (splitHz != splitTarget) { splitTarget = splitHz; split.setTarget(splitHz, smoothingSamples); }
-        if (amount != destructionTarget) { destructionTarget = amount; destruction.setTarget(amount, smoothingSamples); }
+        if (amount != driveAmountTarget) { driveAmountTarget = amount; driveAmount.setTarget(amount, smoothingSamples); }
     }
     void start(double hz, int noteVelocity) noexcept
     {
@@ -118,7 +129,9 @@ public:
                 const BassExciter::Sources* excitation = nullptr) noexcept
     {
         const auto cutoff = split.next();
-        const auto amount = static_cast<float>(destruction.next());
+        // Destroyed grit A runs at full drive, deep in its fold region.
+        const auto amount = destroyed && grit == AnvilGrit::a ? 1.0f : static_cast<float>(driveAmount.next());
+        if (destroyed && grit == AnvilGrit::a) driveAmount.next();
         if (cutoff != currentSplit)
         {
             currentSplit = cutoff;
@@ -173,6 +186,7 @@ public:
             upper = component == BassComponent::dryGrit ? dry
                   : component == BassComponent::unisonGrit ? unison : dryMix * dry + unisonMix * unison;
         }
+        if (destroyed) upper *= destroyedGain[static_cast<std::size_t>(grit)];
         pendingAttack = false;
         if (frame.attack)
         {
@@ -245,6 +259,7 @@ private:
     AnvilRound round;
     AnvilReese reese;
     AnvilGrit grit = AnvilGrit::a;
+    bool destroyed = false;
     // Runs one step on the selected B-D voice; only that one ever runs.
     template <typename Step>
     float withMode(Step&& step) noexcept
@@ -254,8 +269,8 @@ private:
     std::array<GritPath, 2> gritPaths;
     dsp_core::FixedDelay<Frame, latencySamples> aligned;
     dsp_core::Svf finalLowpass;
-    dsp_core::LinearRamp split, destruction, velocity;
-    double splitTarget = 140.0, destructionTarget = 0.5, currentSplit = -1.0;
+    dsp_core::LinearRamp split, driveAmount, velocity;
+    double splitTarget = 140.0, driveAmountTarget = 0.5, currentSplit = -1.0;
     double currentNotchHz = -1.0;
     double rate = 44100.0, frequency = 0.0;
     std::uint32_t phase = 0;

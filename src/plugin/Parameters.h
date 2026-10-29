@@ -16,4 +16,7 @@ inline constexpr auto rhythmMode = "rhythm_mode";
 // Furnace options (SPEC section 3): a centred image, and the wall an octave down.
 inline constexpr auto rhythmMono = "rhythm_center"; // Ironstack used "rhythm_mono"
 inline constexpr auto rhythmDrop = "rhythm_drop";
+// Destruction per instrument (SPEC section 12).
+inline constexpr auto bassDestroy = "bass_destroy";
+inline constexpr auto rhythmDestroy = "rhythm_destroy";
 }

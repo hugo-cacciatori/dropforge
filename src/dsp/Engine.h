@@ -52,37 +52,45 @@ public:
     void reset() noexcept;
     void setLayersEnabled(bool bass, bool rhythm) noexcept;
     void setLayerLevels(float bassDb, float rhythmDb) noexcept;
-    void setBassParameters(float splitHz, float destruction) noexcept
+    void setBassParameters(float splitHz, float drive) noexcept
     {
-        splitTarget = splitHz; driveTarget = destruction;
-        for (auto& voice : bassVoices) voice.setParameters(splitHz, destruction);
+        splitTarget = splitHz; driveTarget = drive;
+        for (auto& voice : bassVoices) voice.setParameters(splitHz, drive);
     }
     // Diagnostic drive amount (fixed in the product) and Tight. Amount 0 makes
     // the whole Furnace chain linear, its dynamics included, for tests.
-    void setRhythmParameters(float destruction, float tight = 0.5f) noexcept
+    void setRhythmParameters(float drive, float tight = 0.5f) noexcept
     {
-        rhythmDrive = destruction; rhythmTight = tight;
-        for (auto& furnace : furnaces) furnace.setParameters(destruction, tight);
+        rhythmDrive = drive; rhythmTight = tight;
+        for (auto& furnace : furnaces) furnace.setParameters(drive, tight);
     }
     // Modes 0-3 = A-D (SPEC section 12), real-time safe: a change while notes
     // sound crossfades; a change while silent is immediate. Modes not built
     // yet (Anvil C/D, Furnace D) play A until M1.7.
     void setFurnaceMode(int mode) noexcept { furnaceTarget.mode = std::clamp(mode, 0, 3); updateFurnace(); }
-    void setAnvilMode(int mode) noexcept;
+    void setAnvilMode(int mode) noexcept { anvilTarget.mode = std::clamp(mode, 0, 3); updateAnvil(); }
     int furnaceMode() const noexcept { return furnaceTarget.mode; }
     // Furnace Drop (SPEC section 3): the wall an octave down, switched like a
     // mode (crossfade while sounding). Mono centres the wall over 20 ms.
     void setFurnaceDrop(bool on) noexcept { furnaceTarget.drop = on; updateFurnace(); }
     void setFurnaceMono(bool on) noexcept;
+    // Destruction (SPEC section 12): each mode's extreme version, switched
+    // like a mode change.
+    void setFurnaceDestruction(bool on) noexcept { furnaceTarget.destroy = on; updateFurnace(); }
+    void setAnvilDestruction(bool on) noexcept { anvilTarget.destroy = on; updateAnvil(); }
     // Mono's level hold: centring loses the side signal's power (about
     // 2 dB on held chords), restored on the mid so Mono is not quieter.
     static constexpr double monoMakeup = 1.2589254117941673; // +2 dB
-    int anvilMode() const noexcept { return anvilModeNow; }
+    int anvilMode() const noexcept { return anvilTarget.mode; }
     // Test hook, not real-time: a custom Furnace design for the playing slot,
     // taking effect at prepare() or reset().
     void setFurnaceDesign(const FurnaceDesign& design) noexcept { furnaces[furnaceSlot].setDesign(design); }
     // Which Anvil grit plays; not real-time, set before prepare().
-    void setAnvilGrit(AnvilGrit grit) noexcept { bassVoices[bassSlot].setGrit(grit); anvilModeNow = static_cast<int>(grit); }
+    void setAnvilGrit(AnvilGrit grit) noexcept
+    {
+        anvilTarget = bassSetup[bassSlot] = {static_cast<int>(grit), false};
+        bassVoices[bassSlot].setMode(grit, false);
+    }
     void noteOn(int channel, int note, int velocity) noexcept;
     void noteOff(int channel, int note) noexcept;
     void allNotesOff(int channel) noexcept;
@@ -109,10 +117,14 @@ private:
     std::size_t furnaceSlot = 0, bassSlot = 0;
     int furnaceFade = 0, bassFade = 0, modeFadeSamples = 1323;
     // What each Furnace slot plays, and what the controls ask for.
-    struct FurnaceSetup { int mode = 0; bool drop = false; bool operator==(const FurnaceSetup&) const = default; };
+    struct FurnaceSetup { int mode = 0; bool drop = false, destroy = false; bool operator==(const FurnaceSetup&) const = default; };
     std::array<FurnaceSetup, 2> furnaceSetup{};
     FurnaceSetup furnaceTarget{};
-    int anvilModeNow = 0, anvilPending = -1;
+    struct AnvilSetup { int mode = 0; bool destroy = false; bool operator==(const AnvilSetup&) const = default; };
+    std::array<AnvilSetup, 2> bassSetup{};
+    AnvilSetup anvilTarget{};
+    void updateAnvil() noexcept;
+    void configureAnvil(std::size_t slot) noexcept;
     dsp_core::LinearRamp monoBlend;
     bool monoOn = false;
     void updateFurnace() noexcept;

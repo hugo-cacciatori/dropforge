@@ -7,8 +7,14 @@ namespace
 {
 struct Event { int sample, kind, channel, note, value; };
 struct Audio { std::vector<float> left, right, bass; };
-// The Furnace candidate under test (SPEC section 4: A, B or C).
+// The Furnace mode under test (SPEC section 12): 'a'-'d' clean, 'A'-'D'
+// with Destruction.
 char candidate = 'a';
+dropforge::FurnaceDesign design()
+{
+    return candidate >= 'a' ? dropforge::FurnaceDesign::candidate(candidate)
+                            : dropforge::FurnaceDesign::destroyed(candidate - 'A');
+}
 double reconstructionError = 0.0;
 int isolatedFixtures = 0;
 Audio render(std::vector<Event> events, int frames, int rate, float split, float drive, float tight,
@@ -16,14 +22,14 @@ Audio render(std::vector<Event> events, int frames, int rate, float split, float
 {
     std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) { return a.sample < b.sample; });
     dropforge::Engine engine;
-    engine.setFurnaceDesign(dropforge::FurnaceDesign::candidate(candidate));
+    engine.setFurnaceDesign(design());
     engine.setLayersEnabled(true, true);
     engine.setBassParameters(split, drive); engine.setRhythmParameters(drive, tight); engine.prepare(rate);
     std::array<dropforge::Engine, 3> isolated;
     if (verifyMasks)
         for (auto& copy : isolated)
         {
-            copy.setFurnaceDesign(dropforge::FurnaceDesign::candidate(candidate));
+            copy.setFurnaceDesign(design());
             copy.setLayersEnabled(true, true);
             copy.setBassParameters(split, drive); copy.setRhythmParameters(drive, tight); copy.prepare(rate);
         }
@@ -184,8 +190,8 @@ int main(int argc, char** argv)
         fixtures(juce::File(argv[1]), rate, 140, 0.5f, 0.5f, rate == 48000);
         holds(rate == 192000 ? edgeHolds : allHolds, rate, 140, 0.5f, 0.5f);
     }
-    // Every round-1 candidate passes the same gates at the default rate.
-    for (const char other : {'b', 'c', 'd'})
+    // Every mode, clean and destroyed, passes the same gates at the default rate.
+    for (const char other : {'b', 'c', 'd', 'A', 'B', 'C', 'D'})
     {
         candidate = other;
         fixtures(juce::File(argv[1]), 48000, 140, 0.5f, 0.5f, false);

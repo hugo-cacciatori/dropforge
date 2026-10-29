@@ -20,12 +20,15 @@ class AnvilRound
 public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
 
+    // Destruction (SPEC section 12): overdriven like a distorted 808, still
+    // rounded: the roll-off moves down to 1 kHz. Takes effect at prepare().
+    void setDestroyed(bool on) noexcept { destroyed = on; }
     void prepare(double splitHz, double rate) noexcept
     {
         oversampler.prepare();
         setSplit(splitHz, rate);
         notch.set(dsp_core::Svf::Type::notch, 110.0, rate, 0.7);
-        for (auto& filter : roll) filter.set(dsp_core::Svf::Type::lowpass, 1500.0, rate);
+        for (auto& filter : roll) filter.set(dsp_core::Svf::Type::lowpass, destroyed ? 1000.0 : 1500.0, rate);
         dsp_core::sine(0); // build the shared table off the audio thread
         reset();
     }
@@ -55,7 +58,7 @@ public:
     // Amount (Anvil's drive, 0..1) sets how hard the saturation leans.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = 1.5f + 2.5f * amount;
+        const auto gain = (1.5f + 2.5f * amount) * (destroyed ? 3.5f : 1.0f);
         return oversampler.next(input, [gain](float value) noexcept { return shape(gain * value); });
     }
     float cleanup(float input) noexcept
@@ -78,5 +81,6 @@ private:
     dsp_core::Oversampler4xFloat oversampler;
     std::array<dsp_core::Svf, 2> postSplit{}, roll{};
     dsp_core::Svf notch;
+    bool destroyed = false;
 };
 }

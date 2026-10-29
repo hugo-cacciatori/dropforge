@@ -18,8 +18,12 @@ class AnvilReese
 {
 public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
-    static constexpr double detuneCents = 8.0;
+    static constexpr double detuneCents = 8.0, destroyedDetuneCents = 14.0;
 
+    // Destruction (SPEC section 12): a wider detune (faster, deeper beats)
+    // and a snarling drive, with a tighter 2.5 kHz top so the sub stays the
+    // clean foundation. Takes effect at prepare().
+    void setDestroyed(bool on) noexcept { destroyed = on; }
     void prepare(double splitHz, double rate) noexcept
     {
         oversampler.prepare();
@@ -27,7 +31,7 @@ public:
         // Band-limit before the drive (keeps 4x oversampling sufficient) and
         // after it (keeps the reese a mid-bass, never a fizz).
         for (auto& filter : sourceLowpass) filter.set(dsp_core::Svf::Type::lowpass, 3000.0, rate);
-        for (auto& filter : topLowpass) filter.set(dsp_core::Svf::Type::lowpass, 3000.0, rate);
+        for (auto& filter : topLowpass) filter.set(dsp_core::Svf::Type::lowpass, destroyed ? 2500.0 : 3000.0, rate);
         notch.set(dsp_core::Svf::Type::notch, 110.0, rate, 0.7);
         reset();
     }
@@ -55,8 +59,9 @@ public:
         {
             sourceHz = hz;
             const auto& bank = dsp_core::WavetableBank::saw();
-            low.setFrequency(bank, hz * std::exp2(-detuneCents / 1200.0), rate);
-            high.setFrequency(bank, hz * std::exp2(detuneCents / 1200.0), rate);
+            const auto cents = destroyed ? destroyedDetuneCents : detuneCents;
+            low.setFrequency(bank, hz * std::exp2(-cents / 1200.0), rate);
+            high.setFrequency(bank, hz * std::exp2(cents / 1200.0), rate);
         }
         auto value = 0.5f * (low.next() + high.next());
         for (auto& filter : preSplit) value = filter.next(value);
@@ -66,7 +71,7 @@ public:
     // Amount (Anvil's drive, 0..1) sets how much edge the drive adds.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = 1.2f + 2.8f * amount;
+        const auto gain = (1.2f + 2.8f * amount) * (destroyed ? 2.5f : 1.0f);
         return oversampler.next(input, [gain](float value) noexcept { return std::tanh(gain * value); });
     }
     float cleanup(float input) noexcept
@@ -83,5 +88,6 @@ private:
     dsp_core::Oversampler4xFloat oversampler;
     std::array<dsp_core::Svf, 2> preSplit{}, postSplit{}, sourceLowpass{}, topLowpass{};
     dsp_core::Svf notch;
+    bool destroyed = false;
 };
 }

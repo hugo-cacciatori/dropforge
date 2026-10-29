@@ -8,8 +8,9 @@ namespace dropforge
 namespace
 {
 // Mode letters to designs (SPEC section 12).
-FurnaceDesign furnaceForMode(int mode) noexcept
+FurnaceDesign furnaceForMode(int mode, bool destroy = false) noexcept
 {
+    if (destroy) return FurnaceDesign::destroyed(mode);
     switch (mode)
     {
         case 1: return FurnaceDesign::candidateB();
@@ -39,10 +40,9 @@ void Engine::reset() noexcept
     for (auto& wheel : bend)
         wheel.reset(1.0);
     // A pending change is applied now: nothing sounds after a reset.
-    if (furnaceSetup[furnaceSlot] != furnaceTarget) { furnaceSetup[furnaceSlot] = furnaceTarget; furnaces[furnaceSlot].setDesign(furnaceForMode(furnaceTarget.mode)); }
+    if (furnaceSetup[furnaceSlot] != furnaceTarget) { furnaceSetup[furnaceSlot] = furnaceTarget; furnaces[furnaceSlot].setDesign(furnaceForMode(furnaceTarget.mode, furnaceTarget.destroy)); }
     for (std::size_t slot = 0; slot < 2; ++slot) furnaces[slot].setDrop(furnaceSetup[slot].drop);
-    if (anvilPending >= 0) { bassVoices[bassSlot].setGrit(gritForMode(anvilPending)); anvilModeNow = anvilPending; }
-    anvilPending = -1;
+    if (bassSetup[bassSlot] != anvilTarget) configureAnvil(bassSlot);
     monoBlend.reset(monoOn ? 1.0 : 0.0);
     furnaceFade = bassFade = 0;
     for (auto& voice : bassVoices) voice.prepare(rate);
@@ -72,7 +72,7 @@ void Engine::clearRhythm() noexcept
 void Engine::configureFurnace(std::size_t slot) noexcept
 {
     furnaceSetup[slot] = furnaceTarget;
-    furnaces[slot].setDesign(furnaceForMode(furnaceTarget.mode));
+    furnaces[slot].setDesign(furnaceForMode(furnaceTarget.mode, furnaceTarget.destroy));
     furnaces[slot].setDrop(furnaceTarget.drop);
     furnaces[slot].prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
     furnaces[slot].setParameters(rhythmDrive, rhythmTight);
@@ -102,25 +102,27 @@ void Engine::setFurnaceMono(bool on) noexcept
     monoBlend.setTarget(on ? 1.0 : 0.0, static_cast<int>(std::ceil(rate * 0.020)));
 }
 
-void Engine::setAnvilMode(int mode) noexcept
+void Engine::configureAnvil(std::size_t slot) noexcept
 {
-    mode = std::clamp(mode, 0, 3);
-    if (bassFade > 0) { anvilPending = mode == anvilModeNow ? -1 : mode; return; }
-    if (mode == anvilModeNow) return;
-    anvilModeNow = mode;
+    bassSetup[slot] = anvilTarget;
+    bassVoices[slot].setParameters(splitTarget, driveTarget);
+    bassVoices[slot].setMode(gritForMode(anvilTarget.mode), anvilTarget.destroy);
+}
+
+// Brings the playing Anvil to the chosen mode and Destruction, like
+// updateFurnace(): in place when silent, else a crossfade to a fresh voice
+// that starts the held key (or stays silent under a release tail).
+void Engine::updateAnvil() noexcept
+{
+    if (bassFade > 0 || bassSetup[bassSlot] == anvilTarget) return;
     if (bassSuspended || !bassVoices[bassSlot].sounding())
     {
-        // Silent: switch in place, as if the mode had always been chosen.
-        bassVoices[bassSlot].setGrit(gritForMode(mode));
+        configureAnvil(bassSlot);
         return;
     }
-    // Sounding (held, or still in its release tail): crossfade to a fresh
-    // voice; it starts the held key, or stays silent under a release tail.
     bassSlot = 1 - bassSlot;
-    auto& incoming = bassVoices[bassSlot];
-    incoming.setParameters(splitTarget, driveTarget);
-    incoming.setGrit(gritForMode(mode));
-    if (bassEnabled && router.bassKey().held()) startBass(incoming);
+    configureAnvil(bassSlot);
+    if (bassEnabled && router.bassKey().held()) startBass(bassVoices[bassSlot]);
     bassFade = modeFadeSamples;
 }
 
@@ -135,12 +137,7 @@ void Engine::finishBassFade() noexcept
 {
     bassFade = 0;
     bassVoices[1 - bassSlot].reset();
-    if (anvilPending >= 0)
-    {
-        const auto next = anvilPending;
-        anvilPending = -1;
-        setAnvilMode(next);
-    }
+    updateAnvil();
 }
 
 void Engine::fadeWeights(int remaining, int total, float& incoming, float& outgoing) noexcept

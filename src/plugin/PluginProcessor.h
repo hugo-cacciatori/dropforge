@@ -60,6 +60,8 @@ private:
     std::atomic<float>* rhythmMode = nullptr;
     std::atomic<float>* rhythmMono = nullptr;
     std::atomic<float>* rhythmDrop = nullptr;
+    std::atomic<float>* bassDestroy = nullptr;
+    std::atomic<float>* rhythmDestroy = nullptr;
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};
