@@ -38,6 +38,11 @@ public:
     static constexpr int controlBlock = 32;
     static constexpr double releaseSeconds = 0.006;
     static constexpr int latencySamples = BassVoice::latencySamples;
+    // Anvil's weight under Furnace at default Levels (SPEC section 4). The new
+    // Furnace is about 4 LU louder than Ironstack's, so Anvil is lifted 4 dB
+    // to sit 6-10 LU under it again, as it did in Ironstack. Provisional:
+    // the owner's ears set it in round 1.
+    static constexpr double anvilBalance = 1.5848931924611136; // +4 dB
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;
     void setLayersEnabled(bool bass, bool rhythm) noexcept;

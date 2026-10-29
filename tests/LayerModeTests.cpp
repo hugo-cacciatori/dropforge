@@ -142,7 +142,7 @@ void attackOracle(double rate)
         if (sample == 4000) { engine.noteOn(3, 57, 0); expected.stop(); }
         if (sample == 4500) attack(1, 0, 127);
         const auto frame = next(engine, LayerMask::bass);
-        const auto oracle = static_cast<float>(expected.next(1.0).output);
+        const auto oracle = static_cast<float>(Engine::anvilBalance * expected.next(1.0).output);
         if (frame.left != oracle)
             std::cerr << "attack_oracle rate=" << rate << " sample=" << sample
                       << " audio_error=" << static_cast<double>(frame.left) - oracle
@@ -274,7 +274,7 @@ void ownership()
     for (int i = 0; i < 2000; ++i) oracle.next(1.0);
     oracle.retargetVelocity(32);
     for (int i = 0; i < 1000; ++i)
-        require(next(actual, LayerMask::bass).left == static_cast<float>(oracle.next(1.0).output),
+        require(next(actual, LayerMask::bass).left == static_cast<float>(Engine::anvilBalance * oracle.next(1.0).output),
                 "same-pitch owner velocity smooths without phase/envelope restart");
     require(actual.bassTarget().channel == 2 && actual.bassTarget().velocity == 32, "owner channel and velocity updated");
     actual.pitchBend(2, 16383); advance(actual, 2000);
@@ -290,11 +290,11 @@ void ownership()
     dropforge::BassVoice bentOracle; bentOracle.prepare(48000.0); bentOracle.start(110.0, 90);
     const auto low = std::exp2(-2.0 / 12.0), high = std::exp2(2.0 / 12.0);
     for (int i = 0; i < 2000; ++i)
-        require(next(bent, LayerMask::bass).left == static_cast<float>(bentOracle.next(low).output), "initial owner bend matches oracle");
+        require(next(bent, LayerMask::bass).left == static_cast<float>(Engine::anvilBalance * bentOracle.next(low).output), "initial owner bend matches oracle");
     bent.noteOff(1, 57);
     dsp_core::LinearRamp offset; offset.reset(low - high); offset.setTarget(0.0, 96);
     for (int i = 0; i < 1000; ++i)
-        require(next(bent, LayerMask::bass).left == static_cast<float>(bentOracle.next(high + offset.next()).output),
+        require(next(bent, LayerMask::bass).left == static_cast<float>(Engine::anvilBalance * bentOracle.next(high + offset.next()).output),
                 "same-pitch owner bend crosses smoothly in 2 ms without restarting phase");
 }
 

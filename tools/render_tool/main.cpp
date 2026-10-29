@@ -15,7 +15,7 @@ struct Options
     juce::File input, wav, metrics;
     int rate = 48000, block = 512;
     double tail = 0.1;
-    float outputDb = 0.0f;
+    float outputDb = 0.0f, anvilLevelDb = 0.0f;
     float splitHz = 140.0f, destruction = 0.5f;
     bool bassEnabled = true, rhythmEnabled = true;
     dropforge::LayerMask mask = dropforge::LayerMask::both;
@@ -68,6 +68,12 @@ Options parse(int argc, char** argv)
             const auto db = number(argv[i + 1]);
             if (db < -12.0 || db > 6.0) throw std::runtime_error("Output must be -12 to +6 dB");
             options.outputDb = static_cast<float>(db);
+        }
+        else if (flag == "--anvil-level-db")
+        {
+            const auto db = number(argv[i + 1]);
+            if (db < -60.0 || db > 6.0) throw std::runtime_error("Anvil Level must be -60 to +6 dB");
+            options.anvilLevelDb = static_cast<float>(db);
         }
         else if (flag == "--split-hz" || flag == "--destruction")
         {
@@ -186,6 +192,7 @@ void render(const Options& options)
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
     core.setFurnaceDesign(dropforge::FurnaceDesign::candidate(options.furnace.front()));
     core.setAnvilGrit(options.anvil == "b" ? dropforge::AnvilGrit::b : dropforge::AnvilGrit::a);
+    core.setLayerLevels(options.anvilLevelDb, 0.0f);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -233,6 +240,7 @@ void render(const Options& options)
     metrics->setProperty("layer_mask", juce::String(options.maskName));
     metrics->setProperty("furnace", juce::String(options.furnace));
     metrics->setProperty("anvil", juce::String(options.anvil));
+    metrics->setProperty("anvil_level_db", options.anvilLevelDb);
     metrics->setProperty("bass_component", juce::String(options.componentName));
     metrics->setProperty("split_hz", options.splitHz);
     metrics->setProperty("destruction", options.destruction);
@@ -268,6 +276,7 @@ int main(int argc, char** argv)
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
                      "  [--furnace a|b|c] (Furnace candidate for listening rounds; default a)\n"
                      "  [--anvil a|b] (Anvil grit candidate: a harmonic grit, b growl; default a)\n"
+                     "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

@@ -226,7 +226,7 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     for (std::size_t i = 0; i < samples; ++i)
     {
         rhythmGain[i] = rhythmFade.next() * rhythmMixLevel.next();
-        bassGain[i] = bassFade.next() * bassMixLevel.next();
+        bassGain[i] = bassFade.next() * bassMixLevel.next() * anvilBalance;
     }
     // A layer switched off stops synthesis at the sample its fade reaches
     // zero, discarding its histories. MIDI tracking continues, so re-entry
