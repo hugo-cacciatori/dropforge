@@ -150,14 +150,16 @@ int standardSequences(const juce::String& tool, const juce::File& build, const j
                   << " rms=" << static_cast<double>(metrics["rms"]) << " clipped=0 finite=yes repeat=exact\n";
     }
     require(lowest == 0 && highest == 127 && totalNotes == 168, "full MIDI range and full-velocity suite coverage retained");
-    require(root.getChildFile("summary.json").replaceWithText(juce::JSON::toString(results)), "suite metrics saved");
     juce::DynamicObject::Ptr receipt = new juce::DynamicObject;
     receipt->setProperty("schema_version", 1);
     receipt->setProperty("passed", true);
-    receipt->setProperty("root", root.getFullPathName());
+    receipt->setProperty("metrics", results);
     require(build.getChildFile(suite + "-result.json").replaceWithText(juce::JSON::toString(juce::var(receipt.get()))),
-            "successful suite publishes its artifact location only after all checks pass");
-    std::cout << "suite=" << suite << " root=" << root.getFullPathName() << '\n';
+            "successful suite publishes its metrics only after all checks pass");
+    // A failed run exits above and keeps its renders for inspection; a passed
+    // run deletes them, so repeated test runs never pile up audio.
+    require(root.deleteRecursively(), "passed suite removes its renders");
+    std::cout << "suite=" << suite << " passed renders_removed=yes\n";
     return 0;
 }
 }
@@ -381,6 +383,7 @@ int main(int argc, char** argv)
     require(run(argv[1], {asynchronous.getFullPathName(), root.getChildFile("type2.wav").getFullPathName(),
                          root.getChildFile("type2.json").getFullPathName()}) != 0, "asynchronous MIDI rejected");
     std::cout << "renderer_repeatability=byte_exact block_sizes=1,73,512 frames=40800 peak="
-              << static_cast<double>(metrics["peak"]) << " rms=" << static_cast<double>(metrics["rms"])
-              << " fixtures=" << root.getFullPathName() << '\n';
+              << static_cast<double>(metrics["peak"]) << " rms=" << static_cast<double>(metrics["rms"]) << '\n';
+    // Failures exit above and keep their fixtures; a pass leaves nothing behind.
+    require(root.deleteRecursively(), "passed renderer test removes its fixtures");
 }
