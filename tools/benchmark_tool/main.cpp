@@ -23,20 +23,27 @@ int main(int argc, char** argv)
     using Clock = std::chrono::steady_clock;
     constexpr int trials = 5, maximumBlockSize = 8192;
     int blockSize = 512, sampleRate = 48000;
-    bool haveRate = false, haveBlock = false;
+    bool haveRate = false, haveBlock = false, haveAnvil = false;
+    auto grit = dropforge::AnvilGrit::a;
     for (int i = 1; i < argc; i += 2)
     {
         const std::string_view option = argv[i];
         if (i + 1 >= argc
-            || (option != "--sample-rate" && option != "--block-size")
+            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil")
             || (option == "--sample-rate" && (haveRate || !readInteger(argv[i + 1], sampleRate)))
-            || (option == "--block-size" && (haveBlock || !readInteger(argv[i + 1], blockSize))))
+            || (option == "--block-size" && (haveBlock || !readInteger(argv[i + 1], blockSize)))
+            || (option == "--anvil" && (haveAnvil || (std::string_view(argv[i + 1]) != "a" && std::string_view(argv[i + 1]) != "b"))))
         {
-            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192]\n";
+            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a|b]\n";
             return 2;
         }
         if (option == "--sample-rate") haveRate = true;
-        else haveBlock = true;
+        else if (option == "--block-size") haveBlock = true;
+        else
+        {
+            haveAnvil = true;
+            grit = std::string_view(argv[i + 1]) == "b" ? dropforge::AnvilGrit::b : dropforge::AnvilGrit::a;
+        }
     }
     if (sampleRate < 44100 || sampleRate > 192000 || blockSize < 1 || blockSize > maximumBlockSize)
     {
@@ -57,6 +64,7 @@ int main(int argc, char** argv)
     {
         dropforge::Engine engine;
         engine.setLayersEnabled(true, true);
+        engine.setAnvilGrit(grit);
         engine.prepare(rate);
         engine.setBassParameters(140.0f, 1.0f);
         engine.setRhythmParameters(1.0f, 0.5f);

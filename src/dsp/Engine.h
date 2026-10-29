@@ -54,6 +54,8 @@ public:
     // Which Furnace candidate plays (SPEC section 4). Not real-time: set it
     // before prepare() or reset(), where it takes effect.
     void setFurnaceDesign(const FurnaceDesign& design) noexcept { furnace = design; }
+    // Which Anvil grit candidate plays; not real-time, set before prepare().
+    void setAnvilGrit(AnvilGrit grit) noexcept { bassVoice.setGrit(grit); }
     void noteOn(int channel, int note, int velocity) noexcept;
     void noteOff(int channel, int note) noexcept;
     void allNotesOff(int channel) noexcept;

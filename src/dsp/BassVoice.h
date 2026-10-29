@@ -12,25 +12,34 @@
 #include <dsp_core/Svf.h>
 #include <dsp_core/WavetableBank.h>
 #include "OutputLevel.h"
+#include "AnvilGrowl.h"
 #include "BassExciter.h"
 
 namespace dropforge
 {
 // Diagnostic render isolation only; select once before rendering a phrase.
+// With grit B, dryGrit and unisonGrit both isolate the growl.
 enum class BassComponent { all, clean, grit, dryGrit, unisonGrit };
+// Which grit candidate rides on the sine (SPEC section 4): A is the
+// owner-accepted harmonic grit, B the growl. Chosen before playing.
+enum class AnvilGrit { a, b };
 // Anvil (SPEC section 4), in 32-bit float: a clean sine exactly an octave
-// down, never saturated, plus the owner-accepted harmonic grit (candidate A,
-// ported from Ironstack with its gains, filters and drive unchanged).
+// down, never saturated, plus a grit candidate: A (ported from Ironstack
+// with its gains, filters and drive unchanged) or the growl B.
 class BassVoice
 {
 public:
     struct Sample { float sine = 0.0f, rich = 0.0f, output = 0.0f; };
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
+    static_assert(AnvilGrowl::latencySamples == latencySamples, "both grit candidates share one alignment delay");
     static constexpr double attackSeconds = 0.001, releaseSeconds = 0.006;
     // Restore 3 dB of clean foundation after the upper-texture audition. Keep
     // grit independent: raising the sine must never drive it into saturation.
     static constexpr float sineGain = static_cast<float>(0.08 * 1.4125375446227544 * outputTrim);
     static constexpr float richGain = static_cast<float>(0.10 * outputTrim);
+    // Growl B sits about 10 dB under the sine's RMS on a held E1: clearly
+    // audible mid-bass over the sub. Provisional until the M1.3c balance.
+    static constexpr float growlGain = static_cast<float>(0.06 * outputTrim);
     // A true dry/wet mix: changing wet share must not add an overall gain boost.
     static constexpr float unisonMix = 0.45f, dryMix = 1.0f - unisonMix;
     static_assert(dryMix + unisonMix == 1.0f, "Dry/wet mix must total 100 percent");
@@ -44,12 +53,13 @@ public:
                          static_cast<int>(std::ceil(rate * releaseSeconds)));
         rich.prepare(rate);
         for (auto& path : gritPaths) path.prepare(splitTarget, rate);
+        growl.prepare(splitTarget, rate);
         finalLowpass.set(dsp_core::Svf::Type::lowpass, 5000.0, rate);
         reset();
     }
     void reset() noexcept
     {
-        envelope.reset(); rich.reset(); aligned.reset(); finalLowpass.reset();
+        envelope.reset(); rich.reset(); growl.reset(); aligned.reset(); finalLowpass.reset();
         for (auto& path : gritPaths) path.reset();
         currentNotchHz = -1.0;
         split.reset(splitTarget); destruction.reset(destructionTarget);
@@ -61,6 +71,8 @@ public:
         transitionRemaining = 0;
         pendingAttack = false;
     }
+    // Not real-time: select before prepare() or between renders.
+    void setGrit(AnvilGrit candidate) noexcept { grit = candidate; reset(); }
     void setParameters(double splitHz, double amount) noexcept
     {
         splitHz = std::isfinite(splitHz) ? std::clamp(splitHz, 80.0, 250.0) : 140.0;
@@ -74,10 +86,12 @@ public:
         // pending audio before its reported latency and click on repeated keys.
         phase = 0;
         rich.reset();
+        growl.start();
         frequency = hz;
         // Initialize even the FIR pre-ringing with the new pitch. Otherwise a
         // fully suspended voice could depend on its previous notch setting.
         for (auto& path : gritPaths) path.setPitch(hz, rate);
+        growl.setNotch(hz, rate);
         currentNotchHz = hz;
         velocity.reset(std::clamp(noteVelocity, 1, 127) / 127.0);
         envelope.start();
@@ -99,21 +113,32 @@ public:
         {
             currentSplit = cutoff;
             for (auto& path : gritPaths) path.setSplit(cutoff, rate);
+            growl.setSplit(cutoff, rate);
         }
-        float sine = 0.0f;
+        float sine = 0.0f, growlSource = 0.0f;
         BassExciter::Sources sources;
         const auto hz = frequency * bendRatio;
         if (envelope.active())
         {
             sine = sineGain * dsp_core::sine(phase);
             phase += static_cast<std::uint32_t>(std::llround(std::clamp(hz / rate, 0.0, 0.5) * 4294967296.0));
-            sources = rich.nextSources(hz, rate, amount);
-            if (excitation != nullptr) sources = *excitation;
+            if (grit == AnvilGrit::b) growlSource = growl.source(hz, rate);
+            else
+            {
+                sources = rich.nextSources(hz, rate, amount);
+                if (excitation != nullptr) sources = *excitation;
+            }
         }
-        const auto dryDriven = gritPaths[0].drive(sources.dry, amount);
-        // Stronger wet saturation is level-compensated inside its 4x stage;
-        // the user's normalized blend and overall grit gain remain unchanged.
-        const auto unisonDriven = gritPaths[1].drive(sources.unison, amount, 6.0f);
+        // Only the selected candidate runs; the other's state stays idle.
+        float dryDriven = 0.0f, unisonDriven = 0.0f, growlDriven = 0.0f;
+        if (grit == AnvilGrit::b) growlDriven = growl.drive(growlSource, amount);
+        else
+        {
+            dryDriven = gritPaths[0].drive(sources.dry, amount);
+            // Stronger wet saturation is level-compensated inside its 4x stage;
+            // the user's normalized blend and overall grit gain remain unchanged.
+            unisonDriven = gritPaths[1].drive(sources.unison, amount, 6.0f);
+        }
         // Sine, envelope and attack marker share the FIR's integer delay.
         // This delays release/retrigger events too, not just steady waveforms.
         const auto frame = aligned.next({sine, static_cast<float>(envelope.next() * velocity.next()), pendingAttack, hz});
@@ -123,13 +148,19 @@ public:
         {
             currentNotchHz = frame.frequency;
             for (auto& path : gritPaths) path.setPitch(currentNotchHz, rate);
+            growl.setNotch(currentNotchHz, rate);
         }
-        // Separate nonlinear paths preserve the original grit timbre. Blend
-        // only after their drive/cleanup; a shared drive would colour the dry.
-        const auto dry = richGain * gritPaths[0].cleanup(dryDriven);
-        const auto unison = richGain * gritPaths[1].cleanup(unisonDriven);
-        const auto upper = component == BassComponent::dryGrit ? dry
-                         : component == BassComponent::unisonGrit ? unison : dryMix * dry + unisonMix * unison;
+        float upper = 0.0f;
+        if (grit == AnvilGrit::b) upper = growlGain * growl.cleanup(growlDriven);
+        else
+        {
+            // Separate nonlinear paths preserve the original grit timbre. Blend
+            // only after their drive/cleanup; a shared drive would colour the dry.
+            const auto dry = richGain * gritPaths[0].cleanup(dryDriven);
+            const auto unison = richGain * gritPaths[1].cleanup(unisonDriven);
+            upper = component == BassComponent::dryGrit ? dry
+                  : component == BassComponent::unisonGrit ? unison : dryMix * dry + unisonMix * unison;
+        }
         pendingAttack = false;
         if (frame.attack)
         {
@@ -198,6 +229,8 @@ private:
     struct Frame { float sine = 0.0f, amplitude = 0.0f; bool attack = false; double frequency = 0.0; };
     dsp_core::FixedEnvelope envelope;
     BassExciter rich;
+    AnvilGrowl growl;
+    AnvilGrit grit = AnvilGrit::a;
     std::array<GritPath, 2> gritPaths;
     dsp_core::FixedDelay<Frame, latencySamples> aligned;
     dsp_core::Svf finalLowpass;

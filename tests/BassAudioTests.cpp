@@ -35,6 +35,17 @@ std::complex<double> coefficient(const std::vector<double>& audio, double hz, do
         sum += audio[i] * std::polar(1.0, -2.0 * pi * hz * static_cast<double>(i) / rate);
     return sum * (2.0 / static_cast<double>(audio.size()));
 }
+// Power of one sinusoidal partial (amplitude squared over two) in audio that
+// was multiplied by a window whose samples sum to windowSum; a rotating
+// phasor instead of polar() per sample keeps hundreds of partials quick.
+double partialPower(const std::vector<double>& audio, double hz, double rate, double windowSum)
+{
+    const auto step = std::polar(1.0, -2.0 * pi * hz / rate);
+    std::complex<double> sum{}, rotation{1.0, 0.0};
+    for (const auto value : audio) { sum += value * rotation; rotation *= step; }
+    const auto amplitude = std::abs(sum) * 2.0 / windowSum;
+    return 0.5 * amplitude * amplitude;
+}
 std::complex<double> butterworthResponse(bool highpass, double hz, double cutoff, double rate)
 {
     // Independent analog prototype evaluated at the bilinear prewarped frequency.
@@ -330,15 +341,30 @@ void audibleRouting()
     std::cout << "bass_pitch_max_error_hz=" << worstPitchError << " retrigger_boundary_step=" << worstTransitionStep
               << " mono=exact block_invariance=exact velocity=linear\n";
 }
-void drivenBassTests()
+void drivenBassTests(dropforge::AnvilGrit grit)
 {
-    double maximumResidualStep = 0.0, worstLowWeightDb = 0.0, worstLeakageDb = -1000.0;
+    double maximumResidualStep = 0.0, worstLowWeightDb = 0.0, worstLeakageDb = -1000.0, naturalStep = 0.0, ownStep = 0.0;
     for (const auto rate : {44100, 48000, 88200, 96000, 176400, 192000})
     {
-        dropforge::BassVoice changed, reference;
-        changed.prepare(rate); reference.prepare(rate);
-        changed.start(55.0, 127); reference.start(55.0, 127);
+        dropforge::BassVoice changed, reference, harshest;
+        for (auto* voice : {&changed, &reference, &harshest})
+        {
+            voice->setGrit(grit); voice->prepare(rate);
+        }
+        harshest.setParameters(80.0, 1.0);
+        harshest.reset();
+        for (auto* voice : {&changed, &reference, &harshest}) voice->start(55.0, 127);
+        // The growl's own steepest step at its harshest steady setting: its
+        // folds are much steeper than grit A, so they set its click threshold.
+        float previousHarsh = 0.0f;
+        for (int i = 0; i < rate / 2; ++i)
+        {
+            const auto value = harshest.next(1.0).output;
+            if (i > rate / 4) naturalStep = std::max(naturalStep, static_cast<double>(std::abs(value - previousHarsh)));
+            previousHarsh = value;
+        }
         double previousResidual = 0.0;
+        float previousOutput = 0.0f;
         for (int i = 0; i < rate; ++i)
         {
             if (i % 777 == 0)
@@ -356,16 +382,26 @@ void drivenBassTests()
             const auto residual = actual.output - clean.output;
             maximumResidualStep = std::max(maximumResidualStep, std::abs(residual - previousResidual));
             previousResidual = residual;
+            ownStep = std::max(ownStep, static_cast<double>(std::abs(actual.output - previousOutput)));
+            previousOutput = actual.output;
         }
     }
-    std::cout << "automation_residual_step_probe=" << maximumResidualStep << '\n';
-    require(maximumResidualStep < 0.01, "low-note automation residual has no step larger than 0.01");
+    std::cout << "automation_residual_step_probe=" << maximumResidualStep << " own_step=" << ownStep
+              << " harshest_steady_step=" << naturalStep << '\n';
+    if (grit == dropforge::AnvilGrit::a)
+        require(maximumResidualStep < 0.01, "low-note automation residual has no step larger than 0.01");
+    else
+        // The growl's folds are far steeper than grit A, so the residual of two
+        // settings is no click measure. Instead the automated voice must never
+        // step further than the growl does at its harshest steady setting.
+        require(ownStep < 1.1 * naturalStep, "growl automation steps no further than its harshest steady sound");
     for (const auto rate : {44100, 48000, 192000})
         for (const auto hz : {35.0, 70.0})
             for (const auto cutoff : {80.0, 250.0})
                 for (const auto amount : {0.0, 1.0})
                 {
                     dropforge::BassVoice voice;
+                    voice.setGrit(grit);
                     voice.prepare(rate);
                     voice.setParameters(cutoff, amount);
                     voice.reset();
@@ -393,6 +429,7 @@ void drivenBassTests()
                     require(leakageDb < -20.0, "rich energy below 80 Hz stays 20 dB below sine at Split/drive boundaries");
                 }
     dropforge::Engine engine;
+    engine.setAnvilGrit(grit);
     engine.prepare(48000);
     engine.setBassParameters(80.0f, 1.0f);
     engine.noteOn(1, 45, 127);
@@ -403,17 +440,17 @@ void drivenBassTests()
     render(engine, 8192);
     engine.reset();
     require(render(engine, 512) == std::vector<float>(512, 0.0f), "reset clears alignment/FIR/filter/voice history");
-    std::cout << "bass_automation_residual_max_step=" << maximumResidualStep
+    std::cout << "grit=" << (grit == dropforge::AnvilGrit::b ? 'b' : 'a') << " bass_automation_residual_max_step=" << maximumResidualStep
               << " low_weight_worst_abs_db=" << worstLowWeightDb << " upper_energy_below_80hz_dbc=" << worstLeakageDb
               << " protected_sine=bit_exact latency_samples=32\n";
 }
-void componentIsolation()
+void componentIsolation(dropforge::AnvilGrit candidate)
 {
     double worstError = 0.0, parallelError = 0.0;
     for (const auto rate : {44100, 48000, 96000, 192000})
     {
         dropforge::BassVoice full, clean, grit, dry, unison;
-        for (auto* voice : {&full, &clean, &grit, &dry, &unison}) voice->prepare(rate);
+        for (auto* voice : {&full, &clean, &grit, &dry, &unison}) { voice->setGrit(candidate); voice->prepare(rate); }
         for (int i = 0; i < rate; ++i)
         {
             if (i % (rate/4) == 0)
@@ -434,7 +471,7 @@ void componentIsolation()
     // 32-bit float: the parts rebuild the whole within 1e-6 (-120 dB).
     require(worstError < 1.0e-6, "clean plus grit reconstruct Bass through its final filter, releases and retriggers");
     require(parallelError < 1.0e-6, "independently driven dry and unison reconstruct parallel grit through bends/controls/releases");
-    std::cout << "bass_component_reconstruction_error=" << worstError << " parallel_grit_error=" << parallelError << '\n';
+    std::cout << "grit=" << (candidate == dropforge::AnvilGrit::b ? 'b' : 'a') << " bass_component_reconstruction_error=" << worstError << " parallel_grit_error=" << parallelError << '\n';
 }
 void harmonicGritTexture()
 {
@@ -524,14 +561,98 @@ void injectedDriveAliasEvidence()
                   << bins.size() << " worst_selected_alias_dbc=" << 20.0 * std::log10(worst) << '\n';
     }
 }
+// Grit candidate B, the growl (SPEC section 4): its source is periodic, so
+// aliasing is measured on the real voice: everything that is not a harmonic
+// of the played pitch is alias or noise.
+void growlCandidate()
+{
+    using dropforge::AnvilGrit;
+    double worstAliasDb = -1000.0, worstTopDb = -1000.0;
+    for (const auto rate : {44100, 48000, 96000})
+        for (const auto hz : {41.203, 110.0, 261.626})
+            for (const auto amount : {0.0, 1.0})
+            {
+                dropforge::BassVoice growl, harmonic;
+                growl.setGrit(AnvilGrit::b);
+                for (auto* voice : {&growl, &harmonic})
+                {
+                    voice->prepare(rate); voice->setParameters(140.0, amount);
+                    voice->reset(); voice->start(hz, 127);
+                }
+                for (int i = 0; i < rate / 2; ++i)
+                    require(growl.next(1.0).sine == harmonic.next(1.0).sine, "growl leaves the clean sine bit-exact");
+                std::vector<double> upper;
+                for (int i = 0; i < rate; ++i) upper.push_back(growl.next(1.0, dropforge::BassComponent::grit).output);
+                const auto played = std::llround(hz / rate * 4294967296.0) * rate / 4294967296.0;
+                // A Hann window: one second never holds a whole number of
+                // cycles, and unwindowed, neighbouring partials would leak
+                // into each other at about -26 dB and read as alias.
+                double total = 0.0, harmonics = 0.0, top = 0.0, windowSum = 0.0, windowPower = 0.0;
+                for (std::size_t i = 0; i < upper.size(); ++i)
+                {
+                    const auto w = 0.5 - 0.5 * std::cos(2.0 * pi * static_cast<double>(i) / static_cast<double>(upper.size()));
+                    upper[i] *= w;
+                    windowSum += w; windowPower += w * w;
+                    total += upper[i] * upper[i];
+                }
+                total /= windowPower;
+                // Partials above 12 kHz are 60 dB down after the 4 kHz low-pass;
+                // leaving them out only makes the alias figure more pessimistic.
+                for (int k = 1; k * played < std::min(12000.0, rate / 2.0); ++k)
+                {
+                    const auto power = partialPower(upper, k * played, rate, windowSum);
+                    harmonics += power;
+                    if (k * played > 8000.0) top += power;
+                }
+                const auto aliasDb = 10.0 * std::log10(std::max(total - harmonics, 1.0e-30) / total);
+                const auto topDb = 10.0 * std::log10(std::max(top, 1.0e-30) / total);
+                worstAliasDb = std::max(worstAliasDb, aliasDb);
+                worstTopDb = std::max(worstTopDb, topDb);
+                std::cout << "growl rate=" << rate << " hz=" << hz << " amount=" << amount
+                          << " alias_db=" << aliasDb << " above_8k_db=" << topDb << '\n';
+                require(aliasDb < -50.0, "growl energy off the harmonic series stays 50 dB down");
+                require(topDb < -40.0, "growl stays a mid-bass sound: energy above 8 kHz 40 dB down");
+            }
+    // Level against grit A on a held E1 at the default drive, for the record.
+    double levels[2] = {};
+    for (const auto grit : {AnvilGrit::a, AnvilGrit::b})
+    {
+        dropforge::BassVoice voice;
+        voice.setGrit(grit);
+        voice.prepare(48000);
+        voice.start(41.203, 127);
+        double energy = 0.0;
+        for (int i = 0; i < 96000; ++i)
+        {
+            const auto value = voice.next(1.0, dropforge::BassComponent::grit).output;
+            if (i >= 48000) energy += value * value;
+        }
+        levels[grit == AnvilGrit::b ? 1 : 0] = 10.0 * std::log10(energy / 48000.0);
+    }
+    // Mono, block-size invariance and linear velocity through the engine.
+    dropforge::Engine loud, quiet;
+    for (auto* engine : {&loud, &quiet}) { engine->setAnvilGrit(AnvilGrit::b); engine->prepare(48000); }
+    loud.noteOn(1, 40, 127); quiet.noteOn(1, 40, 64);
+    auto reference = loud;
+    require(render(loud, 4096, 1) == render(reference, 4096, 97), "growl is block-partition invariant");
+    const auto a = render(loud, 48000), b = render(quiet, 4096 + 48000, 333);
+    for (std::size_t i = 0; i < a.size(); ++i)
+        require(std::abs(b[i + 4096] - a[i] * (64.0f / 127.0f)) < 3.0e-8f, "growl velocity changes gain only");
+    std::cout << "growl_worst_alias_db=" << worstAliasDb << " growl_above_8k_db=" << worstTopDb
+              << " grit_a_rms_db=" << levels[0] << " growl_rms_db=" << levels[1] << '\n';
+}
 }
 int main()
 {
     filterResponses();
     branchMeasurements();
     audibleRouting();
-    drivenBassTests();
-    componentIsolation();
+    for (const auto grit : {dropforge::AnvilGrit::a, dropforge::AnvilGrit::b})
+    {
+        drivenBassTests(grit);
+        componentIsolation(grit);
+    }
     harmonicGritTexture();
     injectedDriveAliasEvidence();
+    growlCandidate();
 }

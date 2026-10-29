@@ -22,7 +22,7 @@ struct Options
     std::string maskName = "both";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
     std::string componentName = "all";
-    std::string furnace = "a";
+    std::string furnace = "a", anvil = "a";
 };
 
 double number(const char* text)
@@ -98,6 +98,11 @@ Options parse(int argc, char** argv)
             options.furnace = argv[i + 1];
             if (options.furnace != "a" && options.furnace != "b" && options.furnace != "c")
                 throw std::runtime_error("Furnace candidate must be a, b or c");
+        }
+        else if (flag == "--anvil")
+        {
+            options.anvil = argv[i + 1];
+            if (options.anvil != "a" && options.anvil != "b") throw std::runtime_error("Anvil grit must be a or b");
         }
         else if (flag == "--layer-mask")
         {
@@ -180,6 +185,7 @@ void render(const Options& options)
     dropforge::InstrumentCore core;
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
     core.setFurnaceDesign(dropforge::FurnaceDesign::candidate(options.furnace.front()));
+    core.setAnvilGrit(options.anvil == "b" ? dropforge::AnvilGrit::b : dropforge::AnvilGrit::a);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -226,6 +232,7 @@ void render(const Options& options)
     metrics->setProperty("output_db", options.outputDb);
     metrics->setProperty("layer_mask", juce::String(options.maskName));
     metrics->setProperty("furnace", juce::String(options.furnace));
+    metrics->setProperty("anvil", juce::String(options.anvil));
     metrics->setProperty("bass_component", juce::String(options.componentName));
     metrics->setProperty("split_hz", options.splitHz);
     metrics->setProperty("destruction", options.destruction);
@@ -260,6 +267,7 @@ int main(int argc, char** argv)
                      "  [--bass-component all|clean|grit|dry-grit|unison-grit] (diagnostic isolation, same final filter/envelope)\n"
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
                      "  [--furnace a|b|c] (Furnace candidate for listening rounds; default a)\n"
+                     "  [--anvil a|b] (Anvil grit candidate: a harmonic grit, b growl; default a)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }
