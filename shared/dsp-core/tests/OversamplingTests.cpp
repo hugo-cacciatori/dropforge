@@ -1,5 +1,4 @@
 #include <dsp_core/Oversampler4x.h>
-#include <dsp_core/Saturation.h>
 #include <dsp_core/FixedDelay.h>
 #include <dsp_core/Butterworth.h>
 #include <algorithm>
@@ -12,6 +11,20 @@
 #include <new>
 #include <type_traits>
 #include <vector>
+
+namespace dsp_core
+{
+// The test's nonlinear stage (formerly dsp_core::saturate): odd, bounded,
+// with an exact linear bypass at amount 0.
+inline double saturate(double input, double amount) noexcept
+{
+    if (!std::isfinite(input)) return 0.0;
+    amount = std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 0.5;
+    if (amount == 0.0) return input;
+    const auto driven = std::tanh((1.0 + 3.0 * amount) * input);
+    return (1.0 - amount) * input + amount * driven;
+}
+}
 
 namespace
 {
