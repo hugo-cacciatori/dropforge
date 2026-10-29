@@ -19,6 +19,24 @@ FetchContent_Declare(JUCE
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE)
 FetchContent_MakeAvailable(JUCE)
 
+# The non-GUI JUCE modules used by the tools and tests, compiled once.
+# JUCE modules add their sources to every target that links them, so linking
+# them PRIVATE here and re-exporting only their headers and definitions keeps
+# each tool and test from recompiling its own copy of JUCE.
+add_library(dropforge_juce_headless STATIC)
+target_link_libraries(dropforge_juce_headless
+    PRIVATE juce::juce_audio_formats
+    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+target_compile_definitions(dropforge_juce_headless PUBLIC
+    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+    JUCE_USE_FLAC=0 JUCE_USE_OGGVORBIS=0 JUCE_USE_OPUS=0
+    JUCE_USE_MP3AUDIOFORMAT=0 JUCE_USE_LAME_AUDIO_FORMAT=0
+    JUCE_USE_WINDOWS_MEDIA_FORMAT=0)
+target_include_directories(dropforge_juce_headless
+    INTERFACE $<TARGET_PROPERTY:dropforge_juce_headless,INCLUDE_DIRECTORIES>)
+target_compile_definitions(dropforge_juce_headless
+    INTERFACE $<TARGET_PROPERTY:dropforge_juce_headless,COMPILE_DEFINITIONS>)
+
 add_subdirectory(shared/dsp-core)
 add_subdirectory(src/dsp)
 
@@ -26,9 +44,7 @@ add_library(dropforge_core INTERFACE)
 target_link_libraries(dropforge_core INTERFACE dropforge_dsp)
 add_subdirectory(tools/render_tool)
 add_executable(benchmark_tool tools/benchmark_tool/main.cpp)
-target_link_libraries(benchmark_tool PRIVATE dropforge_core juce::juce_audio_basics
-    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
-target_compile_definitions(benchmark_tool PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(benchmark_tool PRIVATE dropforge_core dropforge_juce_headless)
 
 juce_add_plugin(Dropforge
     COMPANY_NAME "Hugo Cacciatori"

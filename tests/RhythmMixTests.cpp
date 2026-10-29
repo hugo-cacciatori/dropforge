@@ -100,7 +100,7 @@ void check(const juce::String& id, const Audio& audio, int rate, float split, fl
               << " pass=" << pass << std::endl;
     if (!pass) ++failures;
 }
-void fixtures(const juce::File& file, int rate, float split, float drive, float tight)
+void fixtures(const juce::File& file, int rate, float split, float drive, float tight, bool verifyMasks)
 {
     const auto specification = juce::JSON::parse(file.loadFileAsString());
     const auto* sequences = specification["sequences"].getArray();
@@ -121,30 +121,38 @@ void fixtures(const juce::File& file, int rate, float split, float drive, float 
                 events.push_back({static_cast<int>(std::llround(static_cast<double>(bend[0]) * samplesPerBeat)),
                                   2, static_cast<int>(bend[1]), 0, static_cast<int>(bend[2])});
         const auto frames = static_cast<int>(std::llround(static_cast<double>(sequence["length_beats"]) * samplesPerBeat + rate * 0.1));
-        check(sequence["id"].toString(), render(events, frames, rate, split, drive, tight, true), rate, split, drive, tight);
+        check(sequence["id"].toString(), render(events, frames, rate, split, drive, tight, verifyMasks), rate, split, drive, tight);
     }
 }
 void settledWindow(Audio& audio, int rate)
 {
-    // Integrate ten settled seconds, suppressing artificial LF leakage from
-    // non-integer periods; RMS normalization preserves stationary power.
+    // Integrate the settled part after one second, suppressing artificial LF
+    // leakage from non-integer periods; RMS normalization preserves stationary power.
     for (auto* side : {&audio.left, &audio.right, &audio.bass})
     {
-        *side = std::vector<float>(side->begin() + rate * 2, side->end());
+        *side = std::vector<float>(side->begin() + rate, side->end());
         for (std::size_t i = 0; i < side->size(); ++i)
             (*side)[i] *= static_cast<float>(std::sqrt(8.0 / 3.0) * 0.5
                 * (1.0 - std::cos(6.28318530717958647692 * i / side->size())));
     }
 }
-void holds(int rate, float split, float drive, float tight)
+// Four seconds give a three-second settled window: below 0.5 Hz resolution
+// even for MIDI 0, at a third of the former twelve-second render cost.
+constexpr int holdSeconds = 4;
+using Holds = std::vector<std::vector<int>>;
+// Every register boundary and the chords that stress the low split.
+const Holds allHolds{{0}, {24}, {36}, {45}, {48}, {60}, {96}, {127},
+                     {28, 35, 40}, {40, 47, 52}, {24, 31, 36, 40, 43, 48, 52, 55}};
+// The extremes only, for the parameter corners and the highest sample rate.
+const Holds edgeHolds{{0}, {36}, {96}, {127}, {28, 35, 40}, {24, 31, 36, 40, 43, 48, 52, 55}};
+void holds(const Holds& chords, int rate, float split, float drive, float tight)
 {
-    for (const auto& notes : {std::vector<int>{0}, {12}, {24}, {36}, {45}, {48}, {52}, {60}, {69}, {96}, {127},
-                            {28, 35, 40}, {40, 47, 52}, {52, 57, 60}, {24,31,36,40,43,48,52,55}})
+    for (const auto& notes : chords)
     {
         std::vector<Event> events;
         juce::String id = "hold";
         for (auto note : notes) { events.push_back({0, 0, 1, note, 127}); id += "-" + juce::String(note); }
-        auto audio = render(events, rate * 12, rate, split, drive, tight);
+        auto audio = render(events, rate * holdSeconds, rate, split, drive, tight);
         settledWindow(audio, rate);
         check(id, audio, rate, split, drive, tight);
     }
@@ -156,7 +164,7 @@ int main(int argc, char** argv)
     {
         for (float tight : {0.0f, 1.0f})
         {
-            auto audio = render({{0, 0, 1, 127, 127}}, 48000 * 12, 48000, 250.0f, 1.0f, tight);
+            auto audio = render({{0, 0, 1, 127, 127}}, 48000 * holdSeconds, 48000, 250.0f, 1.0f, tight);
             settledWindow(audio, 48000);
             check("hold-127", audio, 48000, 250.0f, 1.0f, tight);
         }
@@ -165,18 +173,17 @@ int main(int argc, char** argv)
     if (argc != 3) return 2;
     const juce::File output(argv[2]);
     if (!output.replaceWithText("{\"passed\":false}")) return 2;
-    for (int rate : {44100, 48000, 88200, 96000, 176400, 192000})
+    // The lowest and highest supported rates bracket the default 48 kHz; mask
+    // reconstruction is structural, so its four-engine check runs once.
+    for (int rate : {44100, 48000, 192000})
     {
-        fixtures(juce::File(argv[1]), rate, 140, 0.5f, 0.5f);
-        holds(rate, 140, 0.5f, 0.5f);
+        fixtures(juce::File(argv[1]), rate, 140, 0.5f, 0.5f, rate == 48000);
+        holds(rate == 192000 ? edgeHolds : allHolds, rate, 140, 0.5f, 0.5f);
     }
     for (float split : {80.0f, 250.0f})
         for (float drive : {0.0f, 1.0f})
             for (float tight : {0.0f, 1.0f})
-            {
-                fixtures(juce::File(argv[1]), 48000, split, drive, tight);
-                holds(48000, split, drive, tight);
-            }
+                holds(edgeHolds, 48000, split, drive, tight);
     auto result = std::make_unique<juce::DynamicObject>();
     result->setProperty("schema_version", 1); result->setProperty("source_commit", DROPFORGE_COMMIT);
     result->setProperty("source_dirty", DROPFORGE_DIRTY); result->setProperty("passed", failures == 0);

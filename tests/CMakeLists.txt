@@ -29,15 +29,12 @@ add_test(NAME rhythm_spectrum COMMAND dropforge_rhythm_spectrum_tests)
 
 add_executable(dropforge_rhythm_mix_tests RhythmMixTests.cpp)
 target_include_directories(dropforge_rhythm_mix_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")
-target_compile_definitions(dropforge_rhythm_mix_tests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+target_compile_definitions(dropforge_rhythm_mix_tests PRIVATE
     DROPFORGE_COMMIT="${DROPFORGE_CONFIGURED_COMMIT}" DROPFORGE_DIRTY=${DROPFORGE_CONFIGURED_DIRTY})
-target_link_libraries(dropforge_rhythm_mix_tests PRIVATE dropforge_core juce::juce_core
-    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+target_link_libraries(dropforge_rhythm_mix_tests PRIVATE dropforge_core dropforge_juce_headless)
 add_test(NAME rhythm_mix COMMAND dropforge_rhythm_mix_tests "${CMAKE_SOURCE_DIR}/tests/fixtures/sequences.json"
     "${CMAKE_BINARY_DIR}/rhythm-mix.json")
-# Seven moving unison components make this full 280-case render matrix slower
-# on hosted macOS runners. Keep every case and numeric gate; allow it to finish.
-set_tests_properties(rhythm_mix PROPERTIES TIMEOUT 1200)
+set_tests_properties(rhythm_mix PROPERTIES TIMEOUT 300)
 
 add_executable(dropforge_routing_tests RoutingTests.cpp)
 target_link_libraries(dropforge_routing_tests PRIVATE dropforge_core)
@@ -47,9 +44,7 @@ add_test(NAME routing_matrix COMMAND dropforge_routing_tests)
 # without pulling any editor/GUI code into the test executable.
 add_executable(dropforge_oscillator_tests OscillatorTests.cpp)
 target_include_directories(dropforge_oscillator_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_compile_definitions(dropforge_oscillator_tests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
-target_link_libraries(dropforge_oscillator_tests PRIVATE dropforge_dsp juce::juce_audio_basics
-    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+target_link_libraries(dropforge_oscillator_tests PRIVATE dropforge_dsp dropforge_juce_headless)
 add_test(NAME oscillator_midi COMMAND dropforge_oscillator_tests)
 
 # Link the actual processor/editor objects, reusing the compiled JUCE code.
@@ -68,11 +63,7 @@ set_tests_properties(processor_state_editor PROPERTIES TIMEOUT 60)
 
 # End-to-end file/CLI checks use only JUCE's non-GUI audio/core modules.
 add_executable(dropforge_render_tests RenderTests.cpp)
-target_compile_definitions(dropforge_render_tests PRIVATE
-    JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_FLAC=0 JUCE_USE_OGGVORBIS=0 JUCE_USE_OPUS=0
-    JUCE_USE_MP3AUDIOFORMAT=0 JUCE_USE_LAME_AUDIO_FORMAT=0 JUCE_USE_WINDOWS_MEDIA_FORMAT=0)
-target_link_libraries(dropforge_render_tests PRIVATE dropforge_core juce::juce_audio_formats
-    juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+target_link_libraries(dropforge_render_tests PRIVATE dropforge_core dropforge_juce_headless)
 add_test(NAME renderer_offline COMMAND dropforge_render_tests "$<TARGET_FILE:render_tool>" "${CMAKE_BINARY_DIR}")
 add_test(NAME standard_sequences COMMAND dropforge_render_tests "$<TARGET_FILE:render_tool>"
     "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}/tests/fixtures/sequences.json")

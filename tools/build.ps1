@@ -57,15 +57,18 @@ foreach ($value in @($repoRoot, $JuceSource, $developerShell, $pins.visualStudio
 }
 
 New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
-$makeProgram = if ($useNinja) { ' "-DCMAKE_MAKE_PROGRAM={0}"' -f $ninja } else { '' }
 $targetOption = if ($Target) { " --target $Target" } else { '' }
 $jobs = if ($useNinja) { " --parallel $([Environment]::ProcessorCount)" } else { '' }
+# JUCE configures its VST3 manifest helper in a nested CMake run during the
+# build, which finds Ninja only through PATH (this child process's PATH only).
+$ninjaPath = if ($useNinja) { 'set "PATH={0};%PATH%"' -f (Split-Path -Parent $ninja) } else { 'rem NMake' }
 $lines = @(
     '@echo off'
     'setlocal DisableDelayedExpansion'
     ('call "{0}" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver={1}' -f $developerShell, $pins.visualStudio.toolset)
     'if errorlevel 1 exit /b %errorlevel%'
-    ('"{0}" -S "{1}" -B "{2}" -G "{3}" -DCMAKE_BUILD_TYPE={4} -DBUILD_TESTING=ON{5}{6}' -f $cmake, $repoRoot, $buildRoot, $generator, $Configuration, $sourceOption, $makeProgram)
+    $ninjaPath
+    ('"{0}" -S "{1}" -B "{2}" -G "{3}" -DCMAKE_BUILD_TYPE={4} -DBUILD_TESTING=ON{5}' -f $cmake, $repoRoot, $buildRoot, $generator, $Configuration, $sourceOption)
     'if errorlevel 1 exit /b %errorlevel%'
     ('"{0}" --build "{1}"{2}{3}' -f $cmake, $buildRoot, $targetOption, $jobs)
     'if errorlevel 1 exit /b %errorlevel%'
