@@ -37,15 +37,13 @@ void phraseEvent(dropforge::InstrumentCore& core, int block)
     if (block == 7) { midi(core, {0xb0, 64, 127}); core.panic(); }
 }
 
-Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false, bool useTaps = false,
-              bool bothPolicy = false)
+Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false, bool useTaps = false)
 {
     constexpr std::array<int, 10> sizes{1, 17, 0, 512, 3, 1024, 7, 257, 2048, 2048};
     int total = 0;
     for (const auto size : sizes) total += size;
     Stereo output(total);
     dropforge::InstrumentCore core;
-    if (bothPolicy) core.setLayersEnabled(true, true);
     core.prepare(rate, 0.0f, 140.0f, 0.5f);
     int position = 0;
     for (std::size_t block = 0; block < sizes.size(); ++block)
@@ -70,19 +68,13 @@ void isolationTests()
 {
     double maxError = 0.0;
     for (const auto rate : {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0})
-    for (const bool bothPolicy : {false, true})
     {
-        const auto full = phrase(rate, dropforge::LayerMask::both, false, false, bothPolicy);
-        const auto bass = phrase(rate, dropforge::LayerMask::bass, false, false, bothPolicy);
-        const auto rhythm = phrase(rate, dropforge::LayerMask::rhythm, false, false, bothPolicy);
-        const auto silent = phrase(rate, dropforge::LayerMask::none, false, false, bothPolicy);
-        const auto tapped = phrase(rate, dropforge::LayerMask::both, false, true, bothPolicy);
-        const auto resumed = phrase(rate, dropforge::LayerMask::both, true, false, bothPolicy);
-        if (bothPolicy)
-        {
-            const auto locked = phrase(rate, dropforge::LayerMask::bass, false, false, false);
-            require(bass.left != locked.left, "overlapping lower roots distinguish Both isolation from locked Bass");
-        }
+        const auto full = phrase(rate, dropforge::LayerMask::both);
+        const auto bass = phrase(rate, dropforge::LayerMask::bass);
+        const auto rhythm = phrase(rate, dropforge::LayerMask::rhythm);
+        const auto silent = phrase(rate, dropforge::LayerMask::none);
+        const auto tapped = phrase(rate, dropforge::LayerMask::both, false, true);
+        const auto resumed = phrase(rate, dropforge::LayerMask::both, true, false);
         require(full.left == tapped.left && full.right == tapped.right, "enabling taps is audio-neutral");
         for (std::size_t i = 0; i < full.left.size(); ++i)
         {

@@ -178,7 +178,7 @@ double fadeTests(double rate)
             worstControlStep = std::max(worstControlStep, std::abs(baseline * (gain - previousGain)));
             if (disableBass)
                 require(a.rhythmLeft == b.rhythmLeft && a.rhythmRight == b.rhythmRight, "bass enable cannot alter rhythm");
-            else require(a.bass == b.bass, "rhythm disable preserves locked current bass root");
+            else require(a.bass == b.bass, "rhythm disable preserves the current bass root");
         }
     }
     // Reverse a fade before zero. No reset or gain jump at the reversal.

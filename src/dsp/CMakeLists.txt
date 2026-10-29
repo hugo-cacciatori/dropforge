@@ -1,4 +1,4 @@
-add_library(dropforge_dsp STATIC Engine.cpp Engine.h BassNotes.h BassVoice.h RhythmOscillators.h OutputGain.h)
+add_library(dropforge_dsp STATIC Engine.cpp Engine.h NoteRouter.h BassVoice.h RhythmOscillators.h OutputGain.h)
 
 # NMake can lose compiler-generated header dependencies after a failed compile.
 # Keep a small explicit fallback so changing a voice layout cannot accidentally

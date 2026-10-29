@@ -4,9 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <dsp_core/FixedEnvelope.h>
-#include <dsp_core/PolyBlepSaw.h>
-#include "BassNotes.h"
 #include "BassVoice.h"
+#include "NoteRouter.h"
 #include "RhythmOscillators.h"
 #include "RhythmBus.h"
 
@@ -25,13 +24,15 @@ struct LayerTaps
     float* rhythmRight = nullptr;
 };
 
-// Eight stereo rhythm notes plus monophonic bass. Explicit layer enables enter
-// mode-aware routing; older diagnostic callers retain their locked-bass baseline.
-// MIDI decoding stays in plugin; this interface has no JUCE/GUI dependency.
+// Eight stereo Furnace voices, the mono Anvil voice and Blade's note slot
+// (its voice arrives in M2), fed by one NoteRouter. Audio runs in control
+// blocks of up to 32 samples, layer by layer, with per-sample ramps where they
+// are audible. MIDI decoding stays in plugin; no JUCE/GUI dependency here.
 class Engine
 {
 public:
     static constexpr std::size_t rhythmVoiceCount = 8;
+    static constexpr int controlBlock = 32;
     static constexpr double releaseSeconds = 0.006;
     static constexpr int latencySamples = BassVoice::latencySamples;
     void prepare(double sampleRate) noexcept;
@@ -47,7 +48,11 @@ public:
     void noteOff(int channel, int note) noexcept;
     void allNotesOff(int channel) noexcept;
     void pitchBend(int channel, int wheel) noexcept;
-    BassNotes::Target bassTarget() const noexcept { return bassEnabled ? bassNotes.target() : BassNotes::Target{}; }
+    struct NoteTarget { int channel = 0, note = -1, velocity = 0; double frequency = 0.0; };
+    // Anvil's selected key and its octave-down pitch; empty while Anvil is off.
+    NoteTarget bassTarget() const noexcept;
+    // Blade's selected key: the highest held key, tracked whether or not it sounds.
+    NoteTarget leadTarget() const noexcept;
     struct RhythmTarget { int channel, note; double frequency; bool held, active; };
     std::array<RhythmTarget, rhythmVoiceCount> rhythmTargets() const noexcept;
     void process(float* left, float* right, int numSamples,
@@ -72,21 +77,30 @@ private:
     dsp_core::LinearRamp rhythmLevel;
     double rhythmLevelTarget = 1.0;
     bool rhythmWasActive = false;
-    bool bassEnabled = true, rhythmEnabled = true, routingConfigured = false;
+    bool bassEnabled = true, rhythmEnabled = true;
     bool bassSuspended = false, rhythmSuspended = false;
     dsp_core::LinearRamp bassFade, rhythmFade, bassBendOffset;
     dsp_core::LinearRamp bassMixLevel, rhythmMixLevel;
     double bassMixTarget = 1.0, rhythmMixTarget = 1.0;
     static_assert(RhythmBus::latencySamples == latencySamples, "layer latency must agree");
     int bassChannel = 1; // Retain selected bend during the note-off release.
-    BassNotes bassNotes;
-    void updateBass(BassNotes::Change change) noexcept;
+    NoteRouter router;
+    void updateBass(NoteRouter::Change change) noexcept;
     void startRhythm(int channel, int note, int velocity) noexcept;
     void clearRhythm() noexcept;
-    RhythmOscillators::Stereo nextRhythm(const std::array<double, 16>& ratios) noexcept;
+    void processBlock(float* left, float* right, int count, LayerMask outputMask, LayerTaps taps,
+                      BassComponent component) noexcept;
+    void renderRhythm(int count) noexcept;
     std::array<dsp_core::LinearRamp, 16> bend{};
     double rate = 44100.0;
     int attackSamples = 45, releaseSamples = 265, transitionSamples = 89, fadeSamples = 221;
     std::uint64_t serial = 0;
+
+    // Per-block scratch, preallocated: bend ratios per channel, layer gains,
+    // and the Furnace sum with its strongest envelope and velocity.
+    using Block = std::array<double, controlBlock>;
+    std::array<Block, 16> bendRatio{};
+    Block rhythmGain{}, bassGain{}, rhythmLeft{}, rhythmRight{};
+    Block sumLeft{}, sumRight{}, strongestEnvelope{}, strongestVelocity{};
 };
 }

@@ -26,9 +26,8 @@ void Engine::reset() noexcept
     clearRhythm();
     bassChannel = 1;
     bassBendOffset.reset(0.0);
-    bassNotes.reset();
-    bassNotes.setPolicy(!routingConfigured ? BassNotes::Policy::locked
-        : rhythmEnabled ? BassNotes::Policy::lowest : BassNotes::Policy::newest);
+    router.reset();
+    router.setBassRule(rhythmEnabled ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
     bassMixLevel.reset(bassMixTarget);
     rhythmMixLevel.reset(rhythmMixTarget);
     bassFade.reset(bassEnabled ? 1.0 : 0.0);
@@ -50,20 +49,19 @@ void Engine::clearRhythm() noexcept
 
 void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
 {
-    if (routingConfigured && bass == bassEnabled && rhythm == rhythmEnabled) return;
-    routingConfigured = true;
+    if (bass == bassEnabled && rhythm == rhythmEnabled) return;
     const auto bassWasEnabled = bassEnabled;
     const auto rhythmWasEnabled = rhythmEnabled;
     bassEnabled = bass;
     rhythmEnabled = rhythm;
-    const auto change = bassNotes.setPolicy(rhythm ? BassNotes::Policy::lowest : BassNotes::Policy::newest);
+    const auto change = router.setBassRule(rhythm ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
     if (bass != bassWasEnabled)
     {
         bassFade.setTarget(bass ? 1.0 : 0.0, fadeSamples);
         if (bass)
         {
             bassSuspended = false;
-            updateBass(bassNotes.target().note >= 0 ? BassNotes::Change::attack : BassNotes::Change::release);
+            updateBass(router.bassKey().held() ? NoteRouter::Change::attack : NoteRouter::Change::release);
         }
     }
     else if (bass) updateBass(change);
@@ -77,7 +75,7 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
             // already had its history cleared at zero gain.
             for (auto& voice : voices)
                 if (voice.keyDown) { voice.keyDown = false; voice.envelope.stop(); }
-            bassNotes.forEachNewestHeldKey(rhythmVoiceCount, [this](int channel, int note, int velocity) noexcept
+            router.forEachNewestHeldKey(rhythmVoiceCount, [this](int channel, int note, int velocity) noexcept
             {
                 startRhythm(channel, note, velocity);
             });
@@ -94,35 +92,19 @@ void Engine::noteOn(int channel, int note, int velocity) noexcept
         noteOff(channel, note);
         return;
     }
-    updateBass(bassNotes.noteOn(channel, note, velocity));
+    // Blade's change waits for its voice (M2); the router already tracks it.
+    updateBass(router.noteOn(channel, note, velocity).bass);
     if (rhythmEnabled) startRhythm(channel, note, velocity);
 }
 
 void Engine::startRhythm(int channel, int note, int velocity) noexcept
 {
-    auto selected = voices.end();
-    for (auto it = voices.begin(); it != voices.end(); ++it)
-        if (it->active() && it->channel == channel && it->note == note)
-        {
-            selected = it;
-            break;
-        }
-    if (selected == voices.end())
-        selected = std::find_if(voices.begin(), voices.end(), [](const Voice& v) { return !v.active(); });
-    if (selected == voices.end())
-        selected = std::min_element(voices.begin(), voices.end(), [](const Voice& a, const Voice& b)
-        {
-            // Reuse released voices before interrupting a held note, then oldest first.
-            if (a.keyDown != b.keyDown)
-                return !a.keyDown;
-            return a.age < b.age;
-        });
-    auto& voice = *selected;
+    auto& voice = voices[NoteRouter::pickVoice(voices, channel, note)];
     voice.transitionStart = voice.lastOutput;
     voice.transitionRemaining = transitionSamples;
     voice.oscillators.reset(channel, note);
     voice.envelope.start();
-    voice.frequency = 440.0 * std::exp2((note - 69.0) / 12.0);
+    voice.frequency = NoteRouter::frequency(note);
     voice.velocity = std::min(velocity, 127) / 127.0;
     voice.channel = channel;
     voice.note = note;
@@ -132,7 +114,7 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
 
 void Engine::noteOff(int channel, int note) noexcept
 {
-    updateBass(bassNotes.noteOff(channel, note));
+    updateBass(router.noteOff(channel, note).bass);
     for (auto& voice : voices)
         if (voice.keyDown && voice.channel == channel && voice.note == note)
         {
@@ -143,7 +125,7 @@ void Engine::noteOff(int channel, int note) noexcept
 
 void Engine::allNotesOff(int channel) noexcept
 {
-    updateBass(bassNotes.allNotesOff(channel));
+    updateBass(router.allNotesOff(channel).bass);
     for (auto& voice : voices)
         if (voice.channel == channel && voice.keyDown)
         {
@@ -152,26 +134,26 @@ void Engine::allNotesOff(int channel) noexcept
         }
 }
 
-void Engine::updateBass(BassNotes::Change change) noexcept
+void Engine::updateBass(NoteRouter::Change change) noexcept
 {
     if (!bassEnabled) return;
-    if (change == BassNotes::Change::attack)
+    const auto key = router.bassKey();
+    if (change == NoteRouter::Change::attack)
     {
-        const auto target = bassNotes.target();
-        bassChannel = target.channel;
+        bassChannel = key.channel;
         bassBendOffset.reset(0.0);
-        bassVoice.start(target.frequency, target.velocity);
+        bassVoice.start(NoteRouter::bassFrequency(key.note), key.velocity);
     }
-    else if (change == BassNotes::Change::retarget)
+    else if (change == NoteRouter::Change::retarget)
     {
-        const auto target = bassNotes.target();
+        // Same pitch, new owner channel: glide from the old channel's bend.
         const auto oldRatio = bend[static_cast<std::size_t>(bassChannel - 1)].value() + bassBendOffset.value();
-        bassChannel = target.channel;
+        bassChannel = key.channel;
         bassBendOffset.reset(oldRatio - bend[static_cast<std::size_t>(bassChannel - 1)].value());
         bassBendOffset.setTarget(0.0, transitionSamples);
-        bassVoice.retargetVelocity(target.velocity);
+        bassVoice.retargetVelocity(key.velocity);
     }
-    else if (change == BassNotes::Change::release)
+    else if (change == NoteRouter::Change::release)
     {
         bassVoice.stop();
     }
@@ -202,89 +184,147 @@ void Engine::setLayerLevels(float bassDb, float rhythmDb) noexcept
 void Engine::process(float* left, float* right, int numSamples, LayerMask outputMask, LayerTaps taps,
                      BassComponent component) noexcept
 {
-    for (int sample = 0; sample < numSamples; ++sample)
+    const auto offset = [](float* tap, int at) noexcept { return tap ? tap + at : nullptr; };
+    for (int at = 0; at < numSamples; at += controlBlock)
+        processBlock(left + at, right + at, std::min(controlBlock, numSamples - at), outputMask,
+                     {offset(taps.bassLeft, at), offset(taps.bassRight, at),
+                      offset(taps.rhythmLeft, at), offset(taps.rhythmRight, at)},
+                     component);
+}
+
+void Engine::processBlock(float* left, float* right, int count, LayerMask outputMask, LayerTaps taps,
+                          BassComponent component) noexcept
+{
+    const auto samples = static_cast<std::size_t>(count);
+    // Controls first: they never depend on the audio, so each ramp runs over
+    // the whole block before the layers read it.
+    for (std::size_t channel = 0; channel < bend.size(); ++channel)
+        for (std::size_t i = 0; i < samples; ++i)
+            bendRatio[channel][i] = bend[channel].next();
+    for (std::size_t i = 0; i < samples; ++i)
     {
-        std::array<double, 16> ratios{};
-        for (std::size_t channel = 0; channel < bend.size(); ++channel)
-            ratios[channel] = bend[channel].next();
-        const auto rhythm = rhythmSuspended ? RhythmOscillators::Stereo{} : nextRhythm(ratios);
-        const auto rhythmGain = rhythmFade.next() * rhythmMixLevel.next();
-        const auto rhythmLeft = static_cast<float>(rhythm.left * rhythmGain);
-        const auto rhythmRight = static_cast<float>(rhythm.right * rhythmGain);
-        const auto bassGain = bassFade.next() * bassMixLevel.next();
-        const auto bass = bassSuspended ? 0.0f : static_cast<float>(bassGain *
-            bassVoice.next(ratios[static_cast<std::size_t>(bassChannel - 1)] + bassBendOffset.next(), component).output);
-        // Once inaudible, discard histories and stop synthesis. MIDI tracking
-        // continues so re-entry uses held keys, never stale oscillator tails.
-        if (!bassEnabled && bassGain == 0.0 && !bassSuspended)
-        {
-            bassVoice.reset(); bassBendOffset.reset(0.0); bassSuspended = true;
-        }
-        if (!rhythmEnabled && rhythmGain == 0.0 && !rhythmSuspended)
-        {
-            clearRhythm(); rhythmSuspended = true;
-        }
-        if (taps.bassLeft) taps.bassLeft[sample] = bass;
-        if (taps.bassRight) taps.bassRight[sample] = bass;
-        if (taps.rhythmLeft) taps.rhythmLeft[sample] = rhythmLeft;
-        if (taps.rhythmRight) taps.rhythmRight[sample] = rhythmRight;
-        const auto mask = static_cast<unsigned>(outputMask);
-        left[sample] = ((mask & 1u) != 0 ? bass : 0.0f) + ((mask & 2u) != 0 ? rhythmLeft : 0.0f);
-        right[sample] = ((mask & 1u) != 0 ? bass : 0.0f) + ((mask & 2u) != 0 ? rhythmRight : 0.0f);
+        rhythmGain[i] = rhythmFade.next() * rhythmMixLevel.next();
+        bassGain[i] = bassFade.next() * bassMixLevel.next();
+    }
+    // A layer switched off stops synthesis at the sample its fade reaches
+    // zero, discarding its histories. MIDI tracking continues, so re-entry
+    // uses the held keys, never stale oscillator tails.
+    const auto audibleUntil = [&](bool suspended, bool enabled, const Block& gain) noexcept
+    {
+        if (suspended) return std::size_t{0};
+        if (!enabled)
+            for (std::size_t i = 0; i < samples; ++i)
+                if (gain[i] == 0.0) return i + 1;
+        return samples;
+    };
+    const auto rhythmCount = audibleUntil(rhythmSuspended, rhythmEnabled, rhythmGain);
+    renderRhythm(static_cast<int>(rhythmCount));
+    if (!rhythmSuspended && !rhythmEnabled && rhythmCount > 0 && rhythmGain[rhythmCount - 1] == 0.0)
+    {
+        clearRhythm(); rhythmSuspended = true;
+    }
+    const auto bassCount = audibleUntil(bassSuspended, bassEnabled, bassGain);
+    const auto& bassBend = bendRatio[static_cast<std::size_t>(bassChannel - 1)];
+    std::array<float, controlBlock> bass{};
+    for (std::size_t i = 0; i < bassCount; ++i)
+        bass[i] = static_cast<float>(bassGain[i] * bassVoice.next(bassBend[i] + bassBendOffset.next(), component).output);
+    if (!bassSuspended && !bassEnabled && bassCount > 0 && bassGain[bassCount - 1] == 0.0)
+    {
+        bassVoice.reset(); bassBendOffset.reset(0.0); bassSuspended = true;
+    }
+
+    const auto mask = static_cast<unsigned>(outputMask);
+    for (std::size_t i = 0; i < samples; ++i)
+    {
+        const auto furnaceLeft = i < rhythmCount ? static_cast<float>(rhythmLeft[i] * rhythmGain[i]) : 0.0f;
+        const auto furnaceRight = i < rhythmCount ? static_cast<float>(rhythmRight[i] * rhythmGain[i]) : 0.0f;
+        if (taps.bassLeft) taps.bassLeft[i] = bass[i];
+        if (taps.bassRight) taps.bassRight[i] = bass[i];
+        if (taps.rhythmLeft) taps.rhythmLeft[i] = furnaceLeft;
+        if (taps.rhythmRight) taps.rhythmRight[i] = furnaceRight;
+        left[i] = ((mask & 1u) != 0 ? bass[i] : 0.0f) + ((mask & 2u) != 0 ? furnaceLeft : 0.0f);
+        right[i] = ((mask & 1u) != 0 ? bass[i] : 0.0f) + ((mask & 2u) != 0 ? furnaceRight : 0.0f);
     }
 }
 
-RhythmOscillators::Stereo Engine::nextRhythm(const std::array<double, 16>& ratios) noexcept
+void Engine::renderRhythm(int count) noexcept
 {
-    RhythmOscillators::Stereo sum;
-    double rhythmEnvelope = 0.0;
-    double rhythmVelocity = 0.0;
+    const auto samples = static_cast<std::size_t>(count);
+    std::fill_n(sumLeft.begin(), samples, 0.0);
+    std::fill_n(sumRight.begin(), samples, 0.0);
+    std::fill_n(strongestEnvelope.begin(), samples, 0.0);
+    std::fill_n(strongestVelocity.begin(), samples, 0.0);
+    // Voice by voice over the block; the sums still add voices in bank order,
+    // so every sample is bit-identical to a sample-by-sample loop.
     for (auto& voice : voices)
     {
-        if (!voice.active())
+        const auto& ratio = bendRatio[static_cast<std::size_t>(std::max(voice.channel, 1) - 1)];
+        for (std::size_t i = 0; i < samples; ++i)
         {
-            voice.lastOutput = {};
-            continue;
+            if (!voice.active())
+            {
+                voice.lastOutput = {};
+                continue;
+            }
+            auto output = voice.oscillators.next(voice.frequency * ratio[i], rate);
+            const auto envelope = voice.envelope.next();
+            strongestVelocity[i] = std::max(strongestVelocity[i], voice.velocity);
+            strongestEnvelope[i] = std::max(strongestEnvelope[i], envelope);
+            const auto gain = envelope * voice.velocity;
+            output.left *= gain;
+            output.right *= gain;
+            if (voice.transitionRemaining > 0)
+            {
+                // A convex blend from the last sample bounds even rapid steals,
+                // without resetting a live waveform abruptly or adding a clipper.
+                const auto oldWeight = static_cast<double>(voice.transitionRemaining--) / transitionSamples;
+                strongestEnvelope[i] = std::max(strongestEnvelope[i], oldWeight);
+                output.left = oldWeight * voice.transitionStart.left + (1.0 - oldWeight) * output.left;
+                output.right = oldWeight * voice.transitionStart.right + (1.0 - oldWeight) * output.right;
+            }
+            voice.lastOutput = output;
+            sumLeft[i] += output.left;
+            sumRight[i] += output.right;
         }
-        auto output = voice.oscillators.next(voice.frequency * ratios[static_cast<std::size_t>(voice.channel - 1)], rate);
-        const auto envelope = voice.envelope.next();
-        rhythmVelocity = std::max(rhythmVelocity, voice.velocity);
-        rhythmEnvelope = std::max(rhythmEnvelope, envelope);
-        const auto gain = envelope * voice.velocity;
-        output.left *= gain;
-        output.right *= gain;
-        if (voice.transitionRemaining > 0)
-        {
-            // A convex blend from the last sample bounds even rapid steals,
-            // without resetting a live waveform abruptly or adding a clipper.
-            const auto oldWeight = static_cast<double>(voice.transitionRemaining--) / transitionSamples;
-            rhythmEnvelope = std::max(rhythmEnvelope, oldWeight);
-            output.left = oldWeight * voice.transitionStart.left + (1.0 - oldWeight) * output.left;
-            output.right = oldWeight * voice.transitionStart.right + (1.0 - oldWeight) * output.right;
-        }
-        voice.lastOutput = output;
-        sum.left += output.left;
-        sum.right += output.right;
     }
-    // Factor the strongest note's velocity out of the nonlinear drive and
-    // restore it afterwards: single-note velocity changes loudness only.
-    // Other chord notes retain their relative weights in the summed bus.
-    // Smooth reference changes when a louder/quieter note joins or leaves.
-    if (rhythmVelocity > 0.0)
+    for (std::size_t i = 0; i < samples; ++i)
     {
-        if (!rhythmWasActive) rhythmLevel.reset(rhythmVelocity);
-        else if (rhythmVelocity != rhythmLevelTarget) rhythmLevel.setTarget(rhythmVelocity, transitionSamples);
-        rhythmLevelTarget = rhythmVelocity;
+        // Factor the strongest note's velocity out of the nonlinear drive and
+        // restore it afterwards: single-note velocity changes loudness only.
+        // Other chord notes retain their relative weights in the summed bus.
+        // Smooth reference changes when a louder/quieter note joins or leaves.
+        const auto velocity = strongestVelocity[i];
+        if (velocity > 0.0)
+        {
+            if (!rhythmWasActive) rhythmLevel.reset(velocity);
+            else if (velocity != rhythmLevelTarget) rhythmLevel.setTarget(velocity, transitionSamples);
+            rhythmLevelTarget = velocity;
+        }
+        rhythmWasActive = velocity > 0.0;
+        const auto level = rhythmLevel.next();
+        const auto processedLeft = rhythmBus[0].next(sumLeft[i] / level, strongestEnvelope[i], level);
+        const auto processedRight = rhythmBus[1].next(sumRight[i] / level, strongestEnvelope[i], level);
+        // Width still comes from independent synthesis. This final bounded
+        // blend reserves common energy after nonlinear processing as well.
+        const auto mid = 0.5 * (processedLeft + processedRight);
+        const auto side = 0.5 * (processedLeft - processedRight) * RhythmOscillators::spread;
+        rhythmLeft[i] = mid + side;
+        rhythmRight[i] = mid - side;
     }
-    rhythmWasActive = rhythmVelocity > 0.0;
-    const auto level = rhythmLevel.next();
-    const auto processedLeft = rhythmBus[0].next(sum.left / level, rhythmEnvelope, level);
-    const auto processedRight = rhythmBus[1].next(sum.right / level, rhythmEnvelope, level);
-    // Width still comes from independent synthesis. This final bounded
-    // blend reserves common energy after nonlinear processing as well.
-    const auto rhythmMid = 0.5 * (processedLeft + processedRight);
-    const auto rhythmSide = 0.5 * (processedLeft - processedRight) * RhythmOscillators::spread;
-    return {rhythmMid + rhythmSide, rhythmMid - rhythmSide};
+}
+
+Engine::NoteTarget Engine::bassTarget() const noexcept
+{
+    const auto key = router.bassKey();
+    if (!bassEnabled || !key.held()) return {};
+    return {key.channel, key.note, key.velocity, NoteRouter::bassFrequency(key.note)};
+}
+
+Engine::NoteTarget Engine::leadTarget() const noexcept
+{
+    const auto key = router.leadKey();
+    if (!key.held()) return {};
+    return {key.channel, key.note, key.velocity, NoteRouter::frequency(key.note)};
 }
 
 std::array<Engine::RhythmTarget, Engine::rhythmVoiceCount> Engine::rhythmTargets() const noexcept
