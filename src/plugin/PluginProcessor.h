@@ -22,7 +22,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return dropforge::Engine::releaseSeconds + dropforge::Engine::latencySamples / preparedRate; }
+    double getTailLengthSeconds() const override { return dropforge::Engine::releaseSeconds + dropforge::InstrumentCore::latencySamples / preparedRate; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -33,6 +33,13 @@ public:
     void setStateInformation(const void* data, int size) override;
     juce::AudioProcessorValueTreeState& parameterState() noexcept { return state; }
     void requestPanic() noexcept { panicRequested.store(true, std::memory_order_relaxed); }
+    // Meter readings for the editor (any thread, lock-free): the highest
+    // sample peaks and deepest master gain reduction since the last call.
+    dropforge::InstrumentCore::Meters takeMeters() noexcept
+    {
+        return {meterPeakLeft.exchange(0.0f, std::memory_order_relaxed), meterPeakRight.exchange(0.0f, std::memory_order_relaxed),
+                meterGlueDb.exchange(0.0f, std::memory_order_relaxed), meterLimiterDb.exchange(0.0f, std::memory_order_relaxed)};
+    }
     // Which layer page the editor shows. A per-session view preference only:
     // it is not saved and never changes the sound.
     bool isRhythmPageSelected() const noexcept { return rhythmPageSelected.load(std::memory_order_relaxed); }
@@ -51,6 +58,8 @@ private:
     std::atomic<float>* rhythmEnabled = nullptr;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};
+    std::atomic<float> meterPeakLeft{0.0f}, meterPeakRight{0.0f}, meterGlueDb{0.0f}, meterLimiterDb{0.0f};
+    void publishMeters() noexcept;
     std::atomic<bool> rhythmPageSelected{false};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DropforgeProcessor)
 };

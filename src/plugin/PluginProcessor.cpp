@@ -31,7 +31,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{dropforge::parameters::output, 1}, "Output",
-        juce::NormalisableRange<float>{-12.0f, 6.0f}, 0.0f,
+        juce::NormalisableRange<float>{-24.0f, 6.0f}, 0.0f,
         juce::AudioParameterFloatAttributes{}.withLabel("dB")
             .withStringFromValueFunction([](float value, int) { return juce::String(value, 2); })
             .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue(); })));
@@ -68,7 +68,7 @@ void DropforgeProcessor::prepareToPlay(double sampleRate, int)
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
     core.prepare(preparedRate, readOutputDb());
     reset();
-    setLatencySamples(dropforge::Engine::latencySamples);
+    setLatencySamples(dropforge::InstrumentCore::latencySamples);
 }
 
 void DropforgeProcessor::releaseResources() { reset(); }
@@ -76,7 +76,7 @@ void DropforgeProcessor::releaseResources() { reset(); }
 float DropforgeProcessor::readOutputDb() const noexcept
 {
     const auto value = outputDb->load(std::memory_order_relaxed);
-    return std::isfinite(value) ? std::clamp(value, -12.0f, 6.0f) : 0.0f;
+    return std::isfinite(value) ? std::clamp(value, -24.0f, 6.0f) : 0.0f;
 }
 
 void DropforgeProcessor::reset()
@@ -109,6 +109,24 @@ void DropforgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     dropforge::processMidiBlock(core, buffer, midi);
     midi.clear();
+    publishMeters();
+}
+
+void DropforgeProcessor::publishMeters() noexcept
+{
+    // Keep the extreme until the editor reads it: peaks rise, reductions
+    // deepen. One writer, one reader, so the exchange loops end at once.
+    const auto taken = core.takeMeters();
+    const auto keep = [](std::atomic<float>& meter, float value, bool larger) noexcept
+    {
+        auto current = meter.load(std::memory_order_relaxed);
+        while ((larger ? value > current : value < current)
+               && !meter.compare_exchange_weak(current, value, std::memory_order_relaxed)) {}
+    };
+    keep(meterPeakLeft, taken.peakLeft, true);
+    keep(meterPeakRight, taken.peakRight, true);
+    keep(meterGlueDb, taken.glueReductionDb, false);
+    keep(meterLimiterDb, taken.limiterReductionDb, false);
 }
 
 juce::AudioProcessorEditor* DropforgeProcessor::createEditor()

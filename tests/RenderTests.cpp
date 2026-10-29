@@ -108,7 +108,7 @@ int standardSequences(const juce::String& tool, const juce::File& build, const j
                 && metrics["bass_enabled"].isBool() && static_cast<bool>(metrics["bass_enabled"])
                 && metrics["rhythm_enabled"].isBool() && static_cast<bool>(metrics["rhythm_enabled"]) == !bassOnly
                 && static_cast<double>(metrics["split_hz"]) == 140.0 && static_cast<double>(metrics["destruction"]) == 0.5
-                && static_cast<int>(metrics["latency_samples"]) == dropforge::Engine::latencySamples,
+                && static_cast<int>(metrics["latency_samples"]) == dropforge::InstrumentCore::latencySamples,
                 "render metrics identify exact diagnostic mask, bass controls and latency");
         const auto frames = static_cast<int>(std::llround(length * 60.0 / bpm * rate + tail * rate));
         require(static_cast<int>(metrics["frames"]) == frames && static_cast<int>(metrics["nonfinite_samples"]) == 0
@@ -214,7 +214,9 @@ int main(int argc, char** argv)
     require(static_cast<double>(metrics["peak"]) > 0.01 && static_cast<double>(metrics["peak"]) < 1.0
             && static_cast<int>(metrics["clipped_samples"]) == 0
             && static_cast<double>(metrics["left_minus_right_rms"]) > 0.0, "finite, unclipped stereo metrics");
-    require(static_cast<int>(metrics["last_nonzero_frame"]) < 36300 + dropforge::Engine::latencySamples,
+    // Plus the master clipper's oversampling filter ringing after its delay.
+    require(static_cast<int>(metrics["last_nonzero_frame"])
+                < 36300 + dropforge::InstrumentCore::latencySamples + dsp_core::Oversampler4xFloat::latencySamples,
             "hanging note released at file end plus reported latency");
     juce::WavAudioFormat format;
     std::unique_ptr<juce::AudioFormatReader> reader(format.createReaderFor(new juce::FileInputStream(wav), true));
@@ -320,25 +322,14 @@ int main(int argc, char** argv)
                 && recorded["bass_component"].toString() == setting.componentName
                 && recorded["bass_enabled"].isBool() && static_cast<bool>(recorded["bass_enabled"]) == bassEnabled
                 && recorded["rhythm_enabled"].isBool() && static_cast<bool>(recorded["rhythm_enabled"]) == rhythmEnabled
-                && static_cast<double>(recorded["destruction"]) == 1.0 && static_cast<int>(recorded["latency_samples"]) == 32,
+                && static_cast<double>(recorded["destruction"]) == 1.0 && static_cast<int>(recorded["latency_samples"]) == dropforge::InstrumentCore::latencySamples,
                 "CLI non-default controls and diagnostic mask are recorded accurately");
     }
     require(!identical(root.getChildFile("bass-b1-g0.wav"), root.getChildFile("bass-b1-g1.wav")),
             "higher newest key distinguishes solo last-note priority from combined lowest-root isolation");
-    // Reconstruct unchanged Both routing from separately rendered masks. Disabling
-    // rhythm instead would change this fixture's selected bass root.
-    juce::AudioBuffer<float> full(2, 40800), bass(2, 40800), rhythm(2, 40800);
-    for (auto item : {std::make_pair("both-b1-g1.wav", &full), std::make_pair("bass-b1-g1.wav", &bass),
-                      std::make_pair("rhythm-b1-g1.wav", &rhythm)})
-    {
-        std::unique_ptr<juce::AudioFormatReader> decoded(format.createReaderFor(
-            new juce::FileInputStream(root.getChildFile(item.first)), true));
-        require(decoded && decoded->read(item.second, 0, 40800, 0, true, true), "isolation WAV decodes");
-    }
-    for (int channel = 0; channel < 2; ++channel)
-        for (int sample = 0; sample < 40800; ++sample)
-            require(full.getSample(channel, sample) == bass.getSample(channel, sample) + rhythm.getSample(channel, sample),
-                    "Both output reconstructs exactly from masks without changing playing policy");
+    // Masked renders no longer sum to the Both render: the master after them
+    // is deliberately nonlinear. Each mask matched the core replay above, and
+    // the exact pre-master sum is checked in the routing tests.
     require(run(argv[1], paths) != 0 && identical(wav, root.getChildFile("repeat.wav")), "existing outputs preserved");
     for (const auto& invalid : {juce::StringArray{"--sample-rate", "nan"}, juce::StringArray{"--block-size", "0"},
                                juce::StringArray{"--tail-seconds", "-1"}, juce::StringArray{"--output-db", "6.1"},

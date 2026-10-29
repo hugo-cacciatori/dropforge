@@ -232,8 +232,11 @@ std::vector<float> render(dropforge::Engine& engine, int samples, int block = 51
         offset += count;
     }
     require(left == right, "bass engine output is bit-exact L == R");
+    // Pre-master engine output: 0.3 of Anvil itself, scaled by the engine's
+    // Anvil balance lift; the master's limiter holds the final ceiling.
     for (auto value : left)
-        require(std::isfinite(value) && std::fpclassify(value) != FP_SUBNORMAL && std::abs(value) < 0.3f,
+        require(std::isfinite(value) && std::fpclassify(value) != FP_SUBNORMAL
+                && std::abs(value) < 0.3f * static_cast<float>(dropforge::Engine::anvilBalance),
                 "audible bass output stays finite, normal and bounded");
     return left;
 }

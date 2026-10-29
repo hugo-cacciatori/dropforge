@@ -1,7 +1,11 @@
 #pragma once
 
 #include "MidiDispatch.h"
+#include "dsp/Master.h"
 #include "dsp/OutputGain.h"
+#include <algorithm>
+#include <cmath>
+#include <utility>
 
 namespace dropforge
 {
@@ -10,20 +14,30 @@ namespace dropforge
 class InstrumentCore
 {
 public:
+    // Voices and master together: what the host is told and compensates.
+    static constexpr int latencySamples = Engine::latencySamples + Master::latencySamples;
+    // Meter taps for the editor: sample peaks after Output and the deepest
+    // master gain reductions since the last takeMeters().
+    struct Meters { float peakLeft = 0.0f, peakRight = 0.0f, glueReductionDb = 0.0f, limiterReductionDb = 0.0f; };
+
     void prepare(double sampleRate, float outputDb = 0.0f, float splitHz = 140.0f, float destruction = 0.5f) noexcept
     {
         engine.prepare(sampleRate);
         engine.setBassParameters(splitHz, destruction);
         engine.setRhythmParameters(destruction);
         engine.reset();
+        master.prepare(sampleRate);
         output.prepare(sampleRate, outputDb);
+        meters = {};
     }
     void reset(float outputDb, float splitHz = 140.0f, float destruction = 0.5f) noexcept
     {
         engine.setBassParameters(splitHz, destruction);
         engine.setRhythmParameters(destruction);
         engine.reset();
+        master.reset();
         output.reset(outputDb);
+        meters = {};
     }
     void setOutputDb(float db) noexcept { output.setTarget(db); }
     // Furnace candidate for renders and listening rounds; set before prepare().
@@ -51,13 +65,24 @@ public:
                  BassComponent component = BassComponent::all) noexcept
     {
         engine.process(left, right, samples, outputMask, taps, component);
+        master.process(left, right, samples);
         float* channels[]{left, right};
         output.process(channels, 2, samples);
+        meters.glueReductionDb = std::min(meters.glueReductionDb, master.lastMeters().glueReductionDb);
+        meters.limiterReductionDb = std::min(meters.limiterReductionDb, master.lastMeters().limiterReductionDb);
+        for (int i = 0; i < samples; ++i)
+        {
+            meters.peakLeft = std::max(meters.peakLeft, std::abs(left[i]));
+            meters.peakRight = std::max(meters.peakRight, std::abs(right[i]));
+        }
     }
+    Meters takeMeters() noexcept { return std::exchange(meters, Meters{}); }
 
 private:
     Engine engine;
+    Master master;
     OutputGain output;
+    Meters meters;
 };
 
 inline void dispatchMidi(InstrumentCore& core, const std::uint8_t* bytes, int size) noexcept

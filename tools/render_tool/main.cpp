@@ -1,9 +1,11 @@
 #include "plugin/InstrumentCore.h"
+#include <dsp_core/LoudnessMeter.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <locale>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -66,7 +68,7 @@ Options parse(int argc, char** argv)
         else if (flag == "--output-db")
         {
             const auto db = number(argv[i + 1]);
-            if (db < -12.0 || db > 6.0) throw std::runtime_error("Output must be -12 to +6 dB");
+            if (db < -24.0 || db > 6.0) throw std::runtime_error("Output must be -24 to +6 dB");
             options.outputDb = static_cast<float>(db);
         }
         else if (flag == "--anvil-level-db")
@@ -199,6 +201,8 @@ void render(const Options& options)
     std::size_t nextEvent = 0;
     double peak = 0.0, sumSquares = 0.0, sideSquares = 0.0;
     juce::int64 clipped = 0, lastNonzero = -1;
+    auto loudness = std::make_unique<dsp_core::LoudnessMeter>();
+    loudness->prepare(options.rate);
     for (juce::int64 position = 0; position < frames;)
     {
         const auto count = static_cast<int>(std::min<juce::int64>(options.block, frames - position));
@@ -219,6 +223,7 @@ void render(const Options& options)
             const double left = audio.getSample(0, sample), right = audio.getSample(1, sample);
             if (!std::isfinite(left) || !std::isfinite(right)) throw std::runtime_error("Non-finite audio");
             peak = std::max({peak, std::abs(left), std::abs(right)});
+            loudness->process(static_cast<float>(left), static_cast<float>(right));
             sumSquares += left * left + right * right;
             sideSquares += (left - right) * (left - right);
             clipped += (std::abs(left) >= 1.0 ? 1 : 0) + (std::abs(right) >= 1.0 ? 1 : 0);
@@ -246,11 +251,15 @@ void render(const Options& options)
     metrics->setProperty("destruction", options.destruction);
     metrics->setProperty("bass_enabled", options.bassEnabled);
     metrics->setProperty("rhythm_enabled", options.rhythmEnabled);
-    metrics->setProperty("latency_samples", dropforge::Engine::latencySamples);
+    metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
     metrics->setProperty("midi_events", midiEventCount);
     metrics->setProperty("peak", peak);
+    // BS.1770 loudness; -1000 when the file is shorter than the window.
+    metrics->setProperty("integrated_lufs", loudness->integratedLufs());
+    metrics->setProperty("short_term_max_lufs", loudness->shortTermMaxLufs());
+    metrics->setProperty("momentary_max_lufs", loudness->momentaryMaxLufs());
     metrics->setProperty("rms", std::sqrt(sumSquares / (2.0 * static_cast<double>(frames))));
     metrics->setProperty("left_minus_right_rms", std::sqrt(sideSquares / static_cast<double>(frames)));
     metrics->setProperty("clipped_samples", clipped);

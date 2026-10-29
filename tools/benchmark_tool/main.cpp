@@ -1,4 +1,5 @@
 #include "dsp/Engine.h"
+#include "dsp/Master.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -63,21 +64,28 @@ int main(int argc, char** argv)
     for (int trial = 0; trial < trials; ++trial)
     {
         dropforge::Engine engine;
+        dropforge::Master master; // the full instrument: voices plus master chain
         engine.setLayersEnabled(true, true);
         engine.setAnvilGrit(grit);
         engine.prepare(rate);
+        master.prepare(rate);
         engine.setBassParameters(140.0f, 1.0f);
         engine.setRhythmParameters(1.0f, 0.5f);
         for (int note : {40, 47, 52, 55, 59, 64, 67, 71}) engine.noteOn(1, note, 127);
         const auto targets = engine.rhythmTargets();
         if (std::count_if(targets.begin(), targets.end(), [](auto v) { return v.held; }) != 8
             || engine.bassTarget().note != 40) return 1;
-        for (int i = 0; i < warmupBlocks; ++i) engine.process(left.data(), right.data(), blockSize);
+        for (int i = 0; i < warmupBlocks; ++i)
+        {
+            engine.process(left.data(), right.data(), blockSize);
+            master.process(left.data(), right.data(), blockSize);
+        }
         double seconds = 0.0;
         for (int i = 0; i < blocks; ++i)
         {
             const auto start = Clock::now();
             engine.process(left.data(), right.data(), blockSize);
+            master.process(left.data(), right.data(), blockSize);
             const auto duration = std::chrono::duration<double>(Clock::now() - start).count();
             seconds += duration;
             worstBlockMs = std::max(worstBlockMs, duration * 1000.0);

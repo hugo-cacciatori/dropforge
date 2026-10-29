@@ -37,8 +37,11 @@ void phraseEvent(dropforge::InstrumentCore& core, int block)
     if (block == 7) { midi(core, {0xb0, 64, 127}); core.panic(); }
 }
 
-Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false, bool useTaps = false)
+// With returnTaps, the result is the pre-master sum of the layer taps.
+Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false, bool useTaps = false,
+              bool returnTaps = false)
 {
+    useTaps = useTaps || returnTaps;
     constexpr std::array<int, 10> sizes{1, 17, 0, 512, 3, 1024, 7, 257, 2048, 2048};
     int total = 0;
     for (const auto size : sizes) total += size;
@@ -59,6 +62,13 @@ Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false
             for (int i = 0; i < count; ++i)
                 require(bass.left[static_cast<std::size_t>(i)] == bass.right[static_cast<std::size_t>(i)],
                         "audible bass taps stay exactly centered");
+        if (returnTaps)
+            for (int i = 0; i < count; ++i)
+            {
+                const auto at = static_cast<std::size_t>(position + i), j = static_cast<std::size_t>(i);
+                output.left[at] = bass.left[j] + rhythm.left[j];
+                output.right[at] = bass.right[j] + rhythm.right[j];
+            }
         position += count;
     }
     return output;
@@ -66,7 +76,9 @@ Stereo phrase(double rate, dropforge::LayerMask mask, bool changingMasks = false
 
 void isolationTests()
 {
-    double maxError = 0.0;
+    // The master (glue, clipper, limiter) is deliberately nonlinear, so the
+    // layers no longer sum to the full output after it; the exact sum is
+    // checked before the master on the engine below. Here: isolation itself.
     for (const auto rate : {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0})
     {
         const auto full = phrase(rate, dropforge::LayerMask::both);
@@ -74,28 +86,27 @@ void isolationTests()
         const auto rhythm = phrase(rate, dropforge::LayerMask::rhythm);
         const auto silent = phrase(rate, dropforge::LayerMask::none);
         const auto tapped = phrase(rate, dropforge::LayerMask::both, false, true);
-        const auto resumed = phrase(rate, dropforge::LayerMask::both, true, false);
+        // Hidden blocks change what the master hears, so its glue memory
+        // differs; the voices underneath must not, so compare the taps.
+        const auto voices = phrase(rate, dropforge::LayerMask::both, false, false, true);
+        const auto resumed = phrase(rate, dropforge::LayerMask::both, true, false, true);
         require(full.left == tapped.left && full.right == tapped.right, "enabling taps is audio-neutral");
         for (std::size_t i = 0; i < full.left.size(); ++i)
         {
-            maxError = std::max({maxError,
-                std::abs(static_cast<double>(full.left[i]) - (bass.left[i] + rhythm.left[i])),
-                std::abs(static_cast<double>(full.right[i]) - (bass.right[i] + rhythm.right[i]))});
-            require(std::abs(full.left[i] - (bass.left[i] + rhythm.left[i])) < 2.0e-7f
-                    && std::abs(full.right[i] - (bass.right[i] + rhythm.right[i])) < 2.0e-7f,
-                    "isolated contributions reconstruct full output within float rounding after master gain");
             require(bass.left[i] == bass.right[i] && silent.left[i] == 0.0f && silent.right[i] == 0.0f,
                     "bass is centered and omitted contributions are exactly silent");
             if (i >= 1557) // The first six blocks were hidden, but all state must have advanced.
-                require(resumed.left[i] == full.left[i] && resumed.right[i] == full.right[i],
+                require(resumed.left[i] == voices.left[i] && resumed.right[i] == voices.right[i],
                         "mask changes preserve voice, bend, envelope and gain-ramp history");
         }
         require(std::any_of(full.left.begin(), full.left.end(), [](float sample) { return sample != 0.0f; }),
                 "sum/isolation exercises an active rhythm prototype");
+        require(std::any_of(rhythm.left.begin(), rhythm.left.end(), [](float sample) { return sample != 0.0f; }),
+                "isolation exercises an audible rhythm contribution");
         require(std::any_of(bass.left.begin(), bass.left.end(), [](float sample) { return sample != 0.0f; }),
                 "sum/isolation exercises audible bass");
     }
-    std::cout << "isolation_cases=12 rates=6 policies=legacy,Both max_post_master_error=" << maxError << '\n';
+    std::cout << "isolation_cases=12 rates=6 policies=legacy,Both\n";
 
     dropforge::Engine engine;
     engine.prepare(48000);

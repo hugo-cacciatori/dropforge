@@ -185,8 +185,8 @@ void processorTests()
     {
         processor->setRateAndBufferSizeDetails(48000.0, 512);
         processor->prepareToPlay(48000.0, 512);
-        require(processor->getLatencySamples() == 32, "aligned oversampling latency is 32 samples");
-        require(std::abs(processor->getTailLengthSeconds() - (0.006 + 32.0 / 48000.0)) < 1.0e-9,
+        require(processor->getLatencySamples() == dropforge::InstrumentCore::latencySamples, "voices plus master report a fixed 96-sample latency");
+        require(std::abs(processor->getTailLengthSeconds() - (0.006 + 96.0 / 48000.0)) < 1.0e-9,
                 "fixed release plus aligned delay reported");
     }
     juce::AudioBuffer<float> a(2, 512), b(2, 512);
@@ -223,7 +223,10 @@ void processorTests()
         require(a.getSample(0, i) == b.getSample(0, i), "state recall reaches unity during a held note");
     changed.requestPanic();
     changed.processBlock(b, midiB);
-    require(b.getMagnitude(0, 340, 172) == 0.0f, "UI panic releases all voices within release plus latency");
+    // 6 ms release (288 samples), the reported latency, and the master
+    // clipper's oversampling filter ringing out for its own 32 samples.
+    constexpr int silentFrom = 288 + dropforge::InstrumentCore::latencySamples + dsp_core::Oversampler4xFloat::latencySamples;
+    require(b.getMagnitude(0, silentFrom, 512 - silentFrom) == 0.0f, "UI panic releases all voices within release plus latency");
     changed.reset();
     changed.processBlock(b, midiB);
     require(b.getMagnitude(0, 512) == 0.0f, "host reset clears held notes");
@@ -240,9 +243,9 @@ void processorTests()
             for (int i = 0; i < size; ++i)
                 require(std::isfinite(b.getSample(0, i)), "parameter extremes/rates/changing blocks stay finite");
         }
-        require(changed.getLatencySamples() == 32, "latency is stable across rates/block lengths");
+        require(changed.getLatencySamples() == dropforge::InstrumentCore::latencySamples, "latency is stable across rates/block lengths");
     }
-    std::cout << "output_ramp_max_error=" << maximumGainError << " latency_samples=32\n";
+    std::cout << "output_ramp_max_error=" << maximumGainError << " latency_samples=" << dropforge::InstrumentCore::latencySamples << '\n';
 }
 
 void headlessParityTests()
@@ -332,7 +335,7 @@ void routingBridgeTests()
             auto hostMidi = midi;
             processor.processBlock(host, hostMidi);
             dropforge::processMidiBlock(reference, expected, midi);
-            require(processor.getLatencySamples() == 32, "enable and recall preserve fixed latency");
+            require(processor.getLatencySamples() == dropforge::InstrumentCore::latencySamples, "enable and recall preserve fixed latency");
             for (int channel = 0; channel < 2; ++channel)
                 for (int sample = 0; sample < count; ++sample)
                     require(host.getSample(channel, sample) == expected.getSample(channel, sample),
@@ -345,7 +348,7 @@ void routingBridgeTests()
     DropforgeProcessor bassProcessor;
     setToggle(bassProcessor, dropforge::parameters::rhythmEnabled, false);
     bassProcessor.prepareToPlay(48000.0, 512);
-    dropforge::Engine legacy;
+    dropforge::InstrumentCore legacy;
     legacy.setLayersEnabled(true, false);
     legacy.prepare(48000.0);
     juce::AudioBuffer<float> bassAudio(2, 512), legacyAudio(2, 512);
@@ -477,7 +480,9 @@ void editorTests(const juce::String& snapshot)
     juce::AudioBuffer<float> audio(2, 512); juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1, 69, static_cast<juce::uint8>(127)), 0);
     processor.processBlock(audio, midi); panic->onClick(); processor.processBlock(audio, midi);
-    require(audio.getMagnitude(0, 340, 172) == 0.0f, "Panic clears audio through realtime request");
+    // Release, latency and the master clipper filter's ringing, as above.
+    constexpr int quietFrom = 288 + dropforge::InstrumentCore::latencySamples + dsp_core::Oversampler4xFloat::latencySamples;
+    require(audio.getMagnitude(0, quietFrom, 512 - quietFrom) == 0.0f, "Panic clears audio through realtime request");
     if (snapshot.isNotEmpty())
     {
         setOutput(processor, 0);

@@ -42,7 +42,7 @@ public:
 private:
     static float safeDb(float db) noexcept
     {
-        return std::isfinite(db) ? std::clamp(db, -12.0f, 6.0f) : 0.0f;
+        return std::isfinite(db) ? std::clamp(db, -24.0f, 6.0f) : 0.0f;
     }
     dsp_core::LinearRamp gain;
     float lastDb = 0.0f;
