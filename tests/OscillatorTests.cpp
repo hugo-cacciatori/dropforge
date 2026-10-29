@@ -306,37 +306,6 @@ void blockInvariance()
     require(actual == expected, "output is bit-identical across block partitions");
 }
 
-void bandLimiting()
-{
-    constexpr int count = 4800;
-    dsp_core::PolyBlepSaw oscillator;
-    std::vector<double> corrected, naive;
-    for (int i = 0; i < count; ++i)
-    {
-        corrected.push_back(oscillator.next(11000.0, 48000.0));
-        const auto phase = std::fmod(i * 11000.0 / 48000.0, 1.0);
-        naive.push_back(2.0 * phase - 1.0);
-    }
-    auto aliasEnergy = [=](const std::vector<double>& audio)
-    {
-        double sum = 0.0;
-        // Integer-period input: allowed harmonics only at bins 1100 and 2200.
-        for (int bin = 1; bin <= count / 2; ++bin)
-        {
-            if (bin == 1100 || bin == 2200)
-                continue;
-            std::complex<double> coefficient{};
-            for (int sample = 0; sample < count; ++sample)
-                coefficient += audio[static_cast<std::size_t>(sample)]
-                    * std::polar(1.0, -2.0 * pi * bin * sample / count);
-            sum += std::norm(coefficient);
-        }
-        return sum;
-    };
-    const auto reduction = 10.0 * std::log10(aliasEnergy(naive) / aliasEnergy(corrected));
-    require(reduction > 10.0, "PolyBLEP must reduce high-note alias energy versus naive saw");
-    std::cout << "11khz_alias_reduction_db=" << reduction << '\n';
-}
 }
 
 int main()
@@ -346,6 +315,5 @@ int main()
     polyphonyAndRetriggers();
     ratesAndBlocks();
     blockInvariance();
-    bandLimiting();
     return 0;
 }

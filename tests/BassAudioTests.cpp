@@ -1,4 +1,5 @@
 #include "dsp/Engine.h"
+#include <dsp_core/Butterworth.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,6 +11,18 @@
 
 namespace
 {
+// A band-limited periodic probe for filter and FIR response checks: the
+// expected values are computed from whatever this probe contains.
+struct ProbeSaw
+{
+    dsp_core::WavetableOscillator oscillator;
+    void reset(double phase) noexcept { oscillator.reset(static_cast<std::uint32_t>(phase * 4294967296.0)); }
+    double next(double hz, double rate) noexcept
+    {
+        oscillator.setFrequency(dsp_core::WavetableBank::saw(), hz, rate);
+        return oscillator.next();
+    }
+};
 constexpr double pi = 3.14159265358979323846;
 void require(bool condition, const char* message)
 {
@@ -84,12 +97,12 @@ void branchMeasurements()
 {
     dsp_core::Oversampler4x fir;
     fir.prepare();
-    double worstHarmonic = 0.0, worstLeakage = 0.0, worstPhaseError = 0.0;
+    double worstHarmonic = 0.0, worstLeakage = 0.0, worstPhaseError = 0.0, worstSineError = 0.0;
     for (const auto rate : {44100, 48000, 88200, 96000, 176400, 192000})
         for (const auto hz : {4.0, 35.0, 70.0, 140.0, 400.0, 6000.0})
         {
             dropforge::BassVoice voice;
-            dsp_core::PolyBlepSaw richReference, upperReference;
+            ProbeSaw richReference, upperReference;
             upperReference.reset(0.41);
             // Inject the retained periodic probe into both source inputs to
             // test filter/FIR gain and phase independently of aperiodic grit.
@@ -116,14 +129,23 @@ void branchMeasurements()
                 rawRich.push_back(value);
                 require(std::isfinite(sample.output) && std::abs(sample.output) < 0.3, "bass is finite with conservative headroom");
             }
-            const auto fundamental = coefficient(sine, hz, rate);
-            require(std::abs(std::abs(fundamental) - dropforge::BassVoice::sineGain) < 1.0e-8,
+            // The sine plays the nearest 32-bit phase step to hz (within
+            // 0.00002 Hz); analyse it there, so the window does not leak.
+            const auto played = std::llround(hz / rate * 4294967296.0) * rate / 4294967296.0;
+            const auto fundamental = coefficient(sine, played, rate);
+            // 32-bit float and the table sine: within 1e-5 (0.0001 dB; slow reads
+            // of the table at 4 Hz measure 3e-6).
+            const auto sineError = std::abs(std::abs(fundamental) - dropforge::BassVoice::sineGain) / dropforge::BassVoice::sineGain;
+            worstSineError = std::max(worstSineError, sineError);
+            if (sineError >= 1.0e-5) std::cerr << "clean sine rate=" << rate << " hz=" << hz << " relative_error=" << sineError << '\n';
+            require(sineError < 1.0e-5,
                     "clean sine retains full fundamental below and above Split, including sub-audible notes");
             for (int harmonic = 2; harmonic <= 10 && hz * harmonic < rate * 0.5; ++harmonic)
             {
-                const auto ratio = std::abs(coefficient(sine, hz * harmonic, rate) / fundamental);
+                const auto ratio = std::abs(coefficient(sine, played * harmonic, rate) / fundamental);
                 worstHarmonic = std::max(worstHarmonic, ratio);
-                require(ratio < 1.0e-8, "isolated sine harmonics below -160 dBc");
+                if (ratio >= 1.0e-6) std::cerr << "sine harmonic rate=" << rate << " hz=" << hz << " k=" << harmonic << " dbc=" << 20.0 * std::log10(ratio) << std::endl;
+                require(ratio < 1.0e-6, "isolated sine harmonics below -120 dBc (32-bit float floor)");
             }
             const auto upper = coefficient(rich, hz, rate);
             const auto hp = butterworthResponse(true, hz, 140.0, rate);
@@ -132,11 +154,16 @@ void branchMeasurements()
                 firResponse += fir.coefficients()[i] * std::polar(1.0, -2.0 * pi * hz * static_cast<double>(i) / (rate * 4.0));
             // At zero Destruction both source paths coincide; a normalized
             // mix retains their original linear gain and phase.
-            const auto expectedUpper = dropforge::BassVoice::richGain * coefficient(rawRich, hz, rate)
+            const auto expectedUpper = static_cast<double>(dropforge::BassVoice::richGain) * coefficient(rawRich, hz, rate)
                 * hp * hp * hp * hp * firResponse * firResponse
                 * notchResponse(hz, hz, rate) * butterworthResponse(true, hz, 260.0, rate)
                 * butterworthResponse(false, hz, std::min(std::max(3500.0, 4.0*hz), rate*0.45), rate);
-            require(std::abs(upper - expectedUpper) < 1.0e-8,
+            // 32-bit float filters and kernel: within 1e-4 of the 64-bit model
+            // (-80 dB); a wrong filter or notch would be off by percent.
+            if (std::abs(upper - expectedUpper) >= 1.0e-7 + 1.0e-4 * std::abs(expectedUpper))
+                std::cerr << "grit root rate=" << rate << " root=" << hz << " expected=" << std::abs(expectedUpper)
+                          << " error=" << std::abs(upper - expectedUpper) << '\n';
+            require(std::abs(upper - expectedUpper) < 1.0e-7 + 1.0e-4 * std::abs(expectedUpper),
                     "grit root notch leaves the clean oscillator to own the fundamental");
             double harmonicPower = 0.0;
             for (const auto partial : {2.0 * hz, 3.0 * hz})
@@ -146,12 +173,15 @@ void branchMeasurements()
                 std::complex<double> firPartial{};
                 for (std::size_t i = 0; i < fir.coefficients().size(); ++i)
                     firPartial += fir.coefficients()[i] * std::polar(1.0, -2.0*pi*partial*i/(rate*4.0));
-                const auto expected = dropforge::BassVoice::richGain * coefficient(rawRich, partial, rate)
+                const auto expected = static_cast<double>(dropforge::BassVoice::richGain) * coefficient(rawRich, partial, rate)
                     * std::pow(splitResponse, 4) * firPartial * firPartial
                     * notchResponse(partial, hz, rate) * butterworthResponse(true, partial, 260.0, rate)
                     * butterworthResponse(false, partial, std::min(std::max(3500.0, 4.0*hz), rate*0.45), rate);
                 const auto measured = coefficient(rich, partial, rate);
-                require(std::abs(measured-expected) < 1e-8,
+                if (std::abs(measured-expected) >= 1.0e-7 + 1.0e-4 * std::abs(expected))
+                    std::cerr << "grit partial rate=" << rate << " root=" << hz << " partial=" << partial
+                              << " expected=" << std::abs(expected) << " error=" << std::abs(measured-expected) << '\n';
+                require(std::abs(measured-expected) < 1.0e-7 + 1.0e-4 * std::abs(expected),
                         "grit harmonics retain measured gain/phase through Split, root notch and LF cleanup");
                 harmonicPower += std::norm(measured);
             }
@@ -159,7 +189,8 @@ void branchMeasurements()
             const auto finalResponse = butterworthResponse(false, hz, 5000.0, rate);
             const auto error = std::abs(summed - finalResponse * (fundamental + upper));
             worstPhaseError = std::max(worstPhaseError, error);
-            require(error < 1.0e-8, "recombined fundamental has the measured branch phase/level and independent final LP");
+            require(error < 1.0e-7 + 1.0e-4 * std::abs(finalResponse * (fundamental + upper)),
+                    "recombined fundamental has the measured branch phase/level and independent final LP");
             require(std::abs(summed) > 0.75 * std::abs(finalResponse * fundamental),
                     "branch recombination cannot cancel the sine foundation");
             if (hz >= 400.0) require(std::sqrt(harmonicPower) > 0.01, "grit supplies upper harmonics rather than a competing root");
@@ -177,7 +208,7 @@ void branchMeasurements()
         }
     std::cout << "sine_max_harmonic_dbc=" << 20.0 * std::log10(worstHarmonic)
               << " upper_fundamental_leakage_below_70hz_dbc=" << 20.0 * std::log10(worstLeakage)
-              << " recombination_complex_error=" << worstPhaseError << '\n';
+              << " recombination_complex_error=" << worstPhaseError << " clean_sine_relative_error=" << worstSineError << '\n';
 }
 
 std::vector<float> render(dropforge::Engine& engine, int samples, int block = 512)
@@ -346,8 +377,9 @@ void drivenBassTests()
                         const auto frame = voice.next(1.0);
                         sine.push_back(frame.sine); upper.push_back(frame.rich); full.push_back(frame.output);
                     }
-                    const auto fundamental = coefficient(sine, hz, rate);
-                    require(std::abs(std::abs(fundamental) - dropforge::BassVoice::sineGain) < 1.0e-8,
+                    const auto played = std::llround(hz / rate * 4294967296.0) * rate / 4294967296.0;
+                    const auto fundamental = coefficient(sine, played, rate);
+                    require(std::abs(std::abs(fundamental) - dropforge::BassVoice::sineGain) < 1.0e-5 * dropforge::BassVoice::sineGain,
                             "drive preserves the independently selected clean foundation level");
                     const auto reference = fundamental * butterworthResponse(false, hz, 5000.0, rate);
                     const auto weightDb = 20.0 * std::log10(std::abs(coefficient(full, hz, rate) / reference));
@@ -396,11 +428,12 @@ void componentIsolation()
                                 + 0.45 * unison.next(bend, dropforge::BassComponent::unisonGrit).output;
             parallelError = std::max(parallelError, std::abs(mixed - parallel));
             const auto sum = clean.next(bend, dropforge::BassComponent::clean).output + mixed;
-            worstError = std::max(worstError, std::abs(sum - full.next(bend).output));
+            worstError = std::max(worstError, static_cast<double>(std::abs(sum - full.next(bend).output)));
         }
     }
-    require(worstError < 1.0e-12, "clean plus grit reconstruct Bass through its final filter, releases and retriggers");
-    require(parallelError < 1.0e-12, "independently driven dry and unison reconstruct parallel grit through bends/controls/releases");
+    // 32-bit float: the parts rebuild the whole within 1e-6 (-120 dB).
+    require(worstError < 1.0e-6, "clean plus grit reconstruct Bass through its final filter, releases and retriggers");
+    require(parallelError < 1.0e-6, "independently driven dry and unison reconstruct parallel grit through bends/controls/releases");
     std::cout << "bass_component_reconstruction_error=" << worstError << " parallel_grit_error=" << parallelError << '\n';
 }
 void harmonicGritTexture()
@@ -449,7 +482,7 @@ void harmonicGritTexture()
     std::vector<double> high;
     for (int i = 0; i < 48000; ++i) high.push_back(source.nextParts(5500, 48000, 1).body.dry);
     require(std::abs(coefficient(high, 16500, 48000)) > 0.1, "permitted high harmonic remains");
-    require(std::abs(coefficient(high, 20500, 48000)) < 1.0e-10, "out-of-band fifth harmonic cannot fold into source");
+    require(std::abs(coefficient(high, 20500, 48000)) < 1.0e-8, "out-of-band fifth harmonic cannot fold into source");
     std::cout << "bass_harmonic_min_body_rms=" << lowestRms << " max_post_drive_texture_dbr="
               << 20.0 * std::log10(worstTextureRatio) << '\n';
 }

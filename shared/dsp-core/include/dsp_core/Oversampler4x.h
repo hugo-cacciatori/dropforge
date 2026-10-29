@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <type_traits>
 
 namespace dsp_core
 {
@@ -51,45 +52,70 @@ public:
     template <typename Shape>
     Sample next(Sample input, Shape&& shape) noexcept
     {
-        inputHistory[inputPosition] = safe(input);
+        // Each history is stored twice, back to back, so every filter window
+        // is one straight run of memory: no wrap test per tap. The sums keep
+        // their original order, so results are unchanged bit for bit.
+        const auto sample = safe(input);
+        inputHistory[inputPosition] = inputHistory[inputPosition + inputLength] = sample;
+        const auto* newestInput = inputHistory.data() + inputPosition + inputLength;
         Sample result{};
         for (std::size_t phase = 0; phase < factor; ++phase)
         {
             Sample interpolated{};
-            auto position = inputPosition;
-            for (std::size_t tap = phase; tap < kernelSize; tap += factor)
+            if constexpr (std::is_same_v<Sample, float>)
             {
-                interpolated += kernel[tap] * inputHistory[position];
-                position = previous(position, inputHistory.size());
+                // Same four-lane split as the decimation below (float only).
+                Sample sums[4]{};
+                std::size_t j = 0, tap = phase;
+                for (; tap + 3 * factor < kernelSize; tap += 4 * factor, j += 4)
+                    for (std::size_t lane = 0; lane < 4; ++lane)
+                        sums[lane] += kernel[tap + lane * factor] * newestInput[-static_cast<std::ptrdiff_t>(j + lane)];
+                for (; tap < kernelSize; tap += factor, ++j) sums[0] += kernel[tap] * newestInput[-static_cast<std::ptrdiff_t>(j)];
+                interpolated = (sums[0] + sums[1]) + (sums[2] + sums[3]);
             }
-            outputHistory[outputPosition] = safe(shape(interpolated * static_cast<Sample>(factor)));
+            else
+            {
+                const auto* older = newestInput;
+                for (std::size_t tap = phase; tap < kernelSize; tap += factor)
+                    interpolated += kernel[tap] * *older--;
+            }
+            const auto shaped = safe(shape(interpolated * static_cast<Sample>(factor)));
+            outputHistory[outputPosition] = outputHistory[outputPosition + kernelSize] = shaped;
             // Decimate at phase zero, not the last phase: this keeps the FIR
             // group delay an integer and avoids a fractional dry-path mismatch.
             if (phase == 0)
             {
-                position = outputPosition;
-                for (const auto coefficient : kernel)
+                const auto* newestOutput = outputHistory.data() + outputPosition + kernelSize;
+                if constexpr (std::is_same_v<Sample, float>)
                 {
-                    result += coefficient * outputHistory[position];
-                    position = previous(position, outputHistory.size());
+                    // Four partial sums let the CPU overlap the multiply-adds
+                    // (float only; the double path keeps its exact order).
+                    Sample sums[4]{};
+                    std::size_t i = 0;
+                    for (; i + 4 <= kernelSize; i += 4)
+                        for (std::size_t lane = 0; lane < 4; ++lane)
+                            sums[lane] += kernel[i + lane] * newestOutput[-static_cast<std::ptrdiff_t>(i + lane)];
+                    for (; i < kernelSize; ++i) sums[0] += kernel[i] * newestOutput[-static_cast<std::ptrdiff_t>(i)];
+                    result = (sums[0] + sums[1]) + (sums[2] + sums[3]);
                 }
+                else
+                    for (std::size_t i = 0; i < kernelSize; ++i)
+                        result += kernel[i] * newestOutput[-static_cast<std::ptrdiff_t>(i)];
             }
-            if (++outputPosition == outputHistory.size()) outputPosition = 0;
+            if (++outputPosition == kernelSize) outputPosition = 0;
         }
-        if (++inputPosition == inputHistory.size()) inputPosition = 0;
+        if (++inputPosition == inputLength) inputPosition = 0;
         return safe(result);
     }
 private:
-    static std::size_t previous(std::size_t position, std::size_t size) noexcept
-    {
-        return position == 0 ? size - 1 : position - 1;
-    }
+    static constexpr std::size_t inputLength = (kernelSize + factor - 1) / factor;
     static Sample safe(Sample value) noexcept
     {
         return std::isfinite(value) && std::abs(value) >= static_cast<Sample>(1.0e-30) ? value : Sample{};
     }
-    Kernel kernel{}, outputHistory{};
-    std::array<Sample, (kernelSize + factor - 1) / factor> inputHistory{};
+    Kernel kernel{};
+    std::array<Sample, 2 * kernelSize> outputHistory{};
+    std::array<Sample, 2 * inputLength> inputHistory{};
     std::size_t inputPosition = 0, outputPosition = 0;
 };
 using Oversampler4x = BasicOversampler4x<double>;

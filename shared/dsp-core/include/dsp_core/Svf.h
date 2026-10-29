@@ -10,11 +10,12 @@ namespace dsp_core
 // cutoff at 192 kHz, and its cutoff can move without clicks because the
 // state is the integrators' own energy. Coefficients are computed in double.
 // One class covers every Furnace tone stage: low-pass, high-pass, bell, high
-// shelf and the allpass that phase-matches crossover bands, all second order.
+// shelf, notch and the allpass that phase-matches crossover bands, all second
+// order.
 class Svf
 {
 public:
-    enum class Type { lowpass, highpass, bell, highShelf, allpass };
+    enum class Type { lowpass, highpass, bell, highShelf, allpass, notch };
 
     // Keeps the integrator state, so a smoothed caller can move cutoff freely.
     void set(Type kind, double cutoff, double sampleRate, double q = 0.7071067811865476, double gainDb = 0.0) noexcept
@@ -42,6 +43,8 @@ public:
             // Flat magnitude, the phase of a Linkwitz-Riley pair at this cutoff
             // (with Q 0.7071): input - 2k x band = high - k x band + low.
             case Type::allpass: high = 1.0; band = -k; low = 1.0; break;
+            // Removes one frequency (width set by q): input - k x band.
+            case Type::notch: high = 1.0; band = 0.0; low = 1.0; break;
         }
         const auto a1 = 1.0 / (1.0 + g * (g + k));
         c1 = static_cast<float>(a1);

@@ -114,6 +114,26 @@ private:
     std::vector<Level> levels;
 };
 
+// sin(2 pi x phase / 2^32) from one 2048-point table with linear
+// interpolation (error about -130 dB). Integer phases make exact harmonics:
+// sine(k x phase) is the k-th harmonic, locked to the fundamental. The first
+// call builds the table, so call it once outside the audio thread.
+inline float sine(std::uint32_t phase) noexcept
+{
+    static const auto table = [] {
+        std::vector<float> values(WavetableBank::tableSize + 1);
+        for (int i = 0; i <= WavetableBank::tableSize; ++i)
+            values[static_cast<std::size_t>(i)] = static_cast<float>(
+                std::sin(6.28318530717958647692 * i / WavetableBank::tableSize));
+        return values;
+    }();
+    constexpr int fractionBits = 32 - WavetableBank::tableBits;
+    const auto index = phase >> fractionBits;
+    const auto fraction = static_cast<float>(phase & ((1u << fractionBits) - 1u)) * (1.0f / (1u << fractionBits));
+    const auto a = table[index], b = table[index + 1];
+    return a + fraction * (b - a);
+}
+
 // Start phases for one oscillator from a (channel, note, voice slot, unison
 // index) tuple. A fixed integer hash, not a random generator: renders repeat
 // exactly, yet chord notes and unison voices never start phase-locked.
