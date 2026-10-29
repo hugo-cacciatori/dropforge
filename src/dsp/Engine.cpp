@@ -25,6 +25,8 @@ void Engine::reset() noexcept
     for (auto& bus : rhythmBus) { bus.setAnvilPresent(bassEnabled); bus.prepare(rate); }
     // Mono low end: the side signal loses everything below about 150 Hz.
     sideHighpass.set(dsp_core::Svf::Type::highpass, monoBelowHz, rate);
+    furnaceDynamics.prepare(furnaceDynamicsSettings(), rate);
+    furnaceDynamics.setDepth(furnaceDynamicsDepth);
     clearRhythm();
     bassChannel = 1;
     bassBendOffset.reset(0.0);
@@ -46,6 +48,7 @@ void Engine::clearRhythm() noexcept
         voice.envelope.prepare(attackSamples, releaseSamples);
     }
     for (auto& bus : rhythmBus) bus.reset();
+    furnaceDynamics.reset();
     sideHighpass.reset();
     rhythmLevel.reset(1.0); rhythmLevelTarget = 1.0; rhythmWasActive = false;
 }
@@ -326,8 +329,13 @@ void Engine::renderRhythm(int count) noexcept
         const auto level = rhythmLevel.next();
         const auto envelope = static_cast<float>(strongestEnvelope[i]);
         const auto restore = static_cast<float>(level), normalize = static_cast<float>(1.0 / level);
-        const auto processedLeft = rhythmBus[0].next(sumLeft[i] * normalize, envelope, restore);
-        const auto processedRight = rhythmBus[1].next(sumRight[i] * normalize, envelope, restore);
+        auto drivenLeft = rhythmBus[0].drive(sumLeft[i] * normalize, envelope, restore);
+        auto drivenRight = rhythmBus[1].drive(sumRight[i] * normalize, envelope, restore);
+        // Dense and even: the multiband dynamics see the velocity-normalized
+        // wall, so velocity still changes loudness only.
+        furnaceDynamics.process(drivenLeft, drivenRight);
+        const auto processedLeft = rhythmBus[0].tone(drivenLeft);
+        const auto processedRight = rhythmBus[1].tone(drivenRight);
         // Width still comes from independent synthesis. This final bounded
         // blend reserves common energy after nonlinear processing as well.
         // Mono below about 150 Hz: chords stay solid on a club system or a

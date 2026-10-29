@@ -235,8 +235,35 @@ void repeatability()
     require(reset.left == whole.left && reset.right == whole.right, "reset reproduces both channels exactly");
 }
 }
+void dynamicsProbe()
+{
+    // How hard each band of Furnace's dynamics works on typical voicings:
+    // average gain (dB) over a held second, per band (low, mid, high).
+    for (const auto& chord : {std::vector<int>{40, 47, 52}, std::vector<int>{52, 55, 59, 64}, std::vector<int>{64},
+                              std::vector<int>{28, 35, 40, 47}})
+    {
+        dropforge::Engine engine;
+        engine.prepare(48000);
+        for (const auto note : chord) engine.noteOn(1, note, 127);
+        render(engine, 9600);
+        std::array<double, 3> sum{};
+        std::array<float, 64> left{}, right{};
+        for (int block = 0; block < 750; ++block)
+        {
+            engine.process(left.data(), right.data(), 64, dropforge::LayerMask::rhythm);
+            for (int band = 0; band < 3; ++band) sum[static_cast<std::size_t>(band)] += engine.furnaceBandGainDb(band) / 750.0;
+        }
+        std::cout << "dynamics_probe notes=" << chord.front() << "+" << chord.size() - 1
+                  << " low_db=" << sum[0] << " mid_db=" << sum[1] << " high_db=" << sum[2] << '\n';
+        // The OTT shape Furnace A is built on: the core held, the top lifted,
+        // the lows never boomed up. Exact amounts are tuned by listening.
+        require(sum[1] < 0.0 && sum[1] > -6.0, "dynamics hold the mid core down a little");
+        require(sum[2] > 1.0 && sum[2] < 9.0, "dynamics lift the top for shimmer");
+        require(sum[0] > -3.0 && sum[0] < 6.0, "dynamics never boom the low band up");
+    }
+}
 int main()
 {
-    targets(); spectrum(); bentAudio(); repeatability(); octavePresence();
+    targets(); spectrum(); bentAudio(); repeatability(); octavePresence(); dynamicsProbe();
     std::cout << "rhythm_notes=8 pitches=0..127 allocation=deterministic stereo_repeat=exact\n";
 }

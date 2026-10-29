@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <dsp_core/FixedEnvelope.h>
+#include <dsp_core/MultibandDynamics.h>
 #include <dsp_core/Svf.h>
 #include "BassVoice.h"
 #include "NoteRouter.h"
@@ -41,9 +42,13 @@ public:
     void setLayersEnabled(bool bass, bool rhythm) noexcept;
     void setLayerLevels(float bassDb, float rhythmDb) noexcept;
     void setBassParameters(float splitHz, float destruction) noexcept { bassVoice.setParameters(splitHz, destruction); }
+    // Diagnostic drive amount (fixed in the product) and Tight. Amount 0 makes
+    // the whole Furnace chain linear, its dynamics included, for tests.
     void setRhythmParameters(float destruction, float tight = 0.5f) noexcept
     {
         for (auto& bus : rhythmBus) bus.setParameters(destruction, tight);
+        furnaceDynamicsDepth = destruction > 0.0f ? 1.0f : 0.0f;
+        furnaceDynamics.setDepth(furnaceDynamicsDepth);
     }
     void noteOn(int channel, int note, int velocity) noexcept;
     void noteOff(int channel, int note) noexcept;
@@ -56,6 +61,9 @@ public:
     NoteTarget leadTarget() const noexcept;
     struct RhythmTarget { int channel, note; double frequency; bool held, active; };
     std::array<RhythmTarget, rhythmVoiceCount> rhythmTargets() const noexcept;
+    // Furnace's multiband gain per band (0 low, 1 mid, 2 high), in dB, for
+    // tests and meters.
+    float furnaceBandGainDb(int band) const noexcept { return furnaceDynamics.bandGainDb(band); }
     void process(float* left, float* right, int numSamples,
                  LayerMask outputMask = LayerMask::both, LayerTaps taps = {},
                  BassComponent component = BassComponent::all) noexcept;
@@ -85,6 +93,24 @@ private:
     bool bassSuspended = false, rhythmSuspended = false;
     static constexpr double monoBelowHz = 150.0;
     dsp_core::Svf sideHighpass;
+    dsp_core::MultibandDynamics furnaceDynamics;
+    float furnaceDynamicsDepth = 1.0f;
+    // Furnace A's starting dynamics (SPEC section 4), set from the measured
+    // post-drive band peaks of typical voicings (about -14 dB low, -9 dB mid,
+    // -13 dB high on an E power chord); tuned by listening.
+    //   low:  held steady on chords, a gentle lift (at most 6 dB) for high notes,
+    //         so it never booms under Anvil;
+    //   mid:  about 3 dB of compression with 2 dB make-up: the dense core;
+    //   high: lifted about 3 dB toward the top (at most 9 dB): the shimmer.
+    static dsp_core::MultibandDynamics::Settings furnaceDynamicsSettings() noexcept
+    {
+        dsp_core::MultibandDynamics::Settings settings;
+        //            down dB, ratio, up dB, ratio, max lift, output dB
+        settings.band = {{{-12.0f, 4.0f, -22.0f, 2.0f, 6.0f, 0.0f},
+                          {-14.0f, 3.0f, -20.0f, 3.0f, 12.0f, 2.0f},
+                          {-4.0f, 4.0f, -8.0f, 3.0f, 9.0f, 0.0f}}};
+        return settings;
+    }
     dsp_core::LinearRamp bassFade, rhythmFade, bassBendOffset;
     dsp_core::LinearRamp bassMixLevel, rhythmMixLevel;
     double bassMixTarget = 1.0, rhythmMixTarget = 1.0;

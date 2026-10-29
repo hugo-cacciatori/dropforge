@@ -13,8 +13,9 @@ namespace dropforge
 {
 // Furnace's chain for one side, in 32-bit float, after every playable note is
 // summed so chords interact in the drive (SPEC section 4):
-//   Tight high-pass -> 2.8 kHz contour -> 4x asymmetric drive
-//   -> separation low-cut (48 dB/oct) -> low-mid dip -> air shelf
+//   drive(): Tight high-pass -> 2.8 kHz contour -> 4x asymmetric drive
+//   [Engine: stereo-linked 3-band dynamics]
+//   tone(): separation low-cut (48 dB/oct) -> low-mid dip -> air shelf
 //   -> hash low-pass. gain() then carries the latency-aligned chop gate and
 //   velocity restore, which Engine applies after its mid/side stage so no
 //   later filter can ring past the chop.
@@ -51,7 +52,7 @@ public:
         for (auto* filter : {&tightFilter, &contour, &lowMid, &air, &hashLowpass}) filter->reset();
         for (auto& filter : separation) filter.reset();
         lastGain = 0.0f;
-        tight.reset(tightTarget); drive.reset(driveTarget);
+        tight.reset(tightTarget); driveAmount.reset(driveTarget);
         separationLog.reset(std::log2(anvilPresent ? separationHz : aloneHz));
         alignedGate.reset(); alignedLevel.reset();
         countdown = 0;
@@ -61,7 +62,7 @@ public:
     {
         amount = std::isfinite(amount) ? std::clamp(amount, 0.0, 1.0) : 0.5;
         tightness = std::isfinite(tightness) ? std::clamp(tightness, 0.0, 1.0) : 0.5;
-        if (amount != driveTarget) { driveTarget = amount; drive.setTarget(amount, smoothingSamples); }
+        if (amount != driveTarget) { driveTarget = amount; driveAmount.setTarget(amount, smoothingSamples); }
         if (tightness != tightTarget) { tightTarget = tightness; tight.setTarget(tightness, smoothingSamples); }
     }
     // With Anvil off, the separation cut glides down so Furnace alone has body.
@@ -73,19 +74,29 @@ public:
                                 static_cast<int>(std::ceil(rate * separationGlideSeconds)));
     }
 
-    float next(float input, float envelope = 1.0f, float level = 1.0f) noexcept
+    // The chain in two halves, so Engine can run the stereo-linked multiband
+    // dynamics between them (SPEC section 4: drive -> dynamics -> tone).
+    float drive(float input, float envelope = 1.0f, float level = 1.0f) noexcept
     {
         if (countdown-- == 0) updateFilters();
         // Fade filter ringing during the final millisecond of the fixed 6 ms
         // release, without extending its duration or clearing live history.
         const auto gate = alignedGate.next(std::clamp(envelope * 6.0f, 0.0f, 1.0f));
         const auto velocity = alignedLevel.next(level);
-        const auto amount = static_cast<float>(drive.next());
-        auto sample = contour.next(tightFilter.next(input));
-        sample = oversampler.next(sample, [amount](float value) noexcept { return shape(value, amount); });
-        for (auto& filter : separation) sample = filter.next(sample);
         lastGain = outputGain * gate * velocity;
+        const auto amount = static_cast<float>(driveAmount.next());
+        const auto sample = contour.next(tightFilter.next(input));
+        return oversampler.next(sample, [amount](float value) noexcept { return shape(value, amount); });
+    }
+    float tone(float sample) noexcept
+    {
+        for (auto& filter : separation) sample = filter.next(sample);
         return hashLowpass.next(air.next(lowMid.next(sample)));
+    }
+    // One side without the dynamics, for tests of the chain itself.
+    float next(float input, float envelope = 1.0f, float level = 1.0f) noexcept
+    {
+        return tone(drive(input, envelope, level));
     }
     // The output gain, chop gate and velocity for the sample next() returned.
     float gain() const noexcept { return lastGain; }
@@ -139,7 +150,7 @@ private:
     static constexpr std::array<double, 4> separationQ{0.5097955, 0.6013449, 0.8999762, 2.5629154};
     dsp_core::Svf tightFilter, contour, lowMid, air, hashLowpass;
     std::array<dsp_core::Svf, 4> separation{};
-    dsp_core::LinearRamp tight, drive, separationLog;
+    dsp_core::LinearRamp tight, driveAmount, separationLog;
     dsp_core::FixedDelay<float, latencySamples> alignedGate, alignedLevel;
     double rate = 44100.0, tightTarget = 0.5, driveTarget = 0.5;
     double currentTight = -1.0, currentSeparation = -1.0;
