@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -66,9 +67,16 @@ public:
     // Modes 0-3 = A-D (SPEC section 12), real-time safe: a change while notes
     // sound crossfades; a change while silent is immediate. Modes not built
     // yet (Anvil C/D, Furnace D) play A until M1.7.
-    void setFurnaceMode(int mode) noexcept;
+    void setFurnaceMode(int mode) noexcept { furnaceTarget.mode = std::clamp(mode, 0, 3); updateFurnace(); }
     void setAnvilMode(int mode) noexcept;
-    int furnaceMode() const noexcept { return furnaceModeNow; }
+    int furnaceMode() const noexcept { return furnaceTarget.mode; }
+    // Furnace Drop (SPEC section 3): the wall an octave down, switched like a
+    // mode (crossfade while sounding). Mono centres the wall over 20 ms.
+    void setFurnaceDrop(bool on) noexcept { furnaceTarget.drop = on; updateFurnace(); }
+    void setFurnaceMono(bool on) noexcept;
+    // Mono's level hold: centring loses the side signal's power (about
+    // 2 dB on held chords), restored on the mid so Mono is not quieter.
+    static constexpr double monoMakeup = 1.2589254117941673; // +2 dB
     int anvilMode() const noexcept { return anvilModeNow; }
     // Test hook, not real-time: a custom Furnace design for the playing slot,
     // taking effect at prepare() or reset().
@@ -100,7 +108,15 @@ private:
     std::array<BassVoice, 2> bassVoices;
     std::size_t furnaceSlot = 0, bassSlot = 0;
     int furnaceFade = 0, bassFade = 0, modeFadeSamples = 1323;
-    int furnaceModeNow = 0, anvilModeNow = 0, furnacePending = -1, anvilPending = -1;
+    // What each Furnace slot plays, and what the controls ask for.
+    struct FurnaceSetup { int mode = 0; bool drop = false; bool operator==(const FurnaceSetup&) const = default; };
+    std::array<FurnaceSetup, 2> furnaceSetup{};
+    FurnaceSetup furnaceTarget{};
+    int anvilModeNow = 0, anvilPending = -1;
+    dsp_core::LinearRamp monoBlend;
+    bool monoOn = false;
+    void updateFurnace() noexcept;
+    void configureFurnace(std::size_t slot) noexcept;
     float splitTarget = 140.0f, driveTarget = 0.5f, rhythmDrive = 0.5f, rhythmTight = 0.5f;
     bool bassEnabled = true, rhythmEnabled = true;
     bool bassSuspended = false, rhythmSuspended = false;

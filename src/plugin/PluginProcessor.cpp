@@ -50,6 +50,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::bassMode, 1}, "Anvil Mode", modes, 0));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{dropforge::parameters::rhythmMode, 1}, "Furnace Mode", modes, 0));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::rhythmMono, 1}, "Furnace Mono", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::rhythmDrop, 1}, "Furnace Drop", false));
     return layout;
 }
 
@@ -64,6 +68,8 @@ DropforgeProcessor::DropforgeProcessor()
     rhythmEnabled = state.getRawParameterValue(dropforge::parameters::rhythmEnabled);
     bassMode = state.getRawParameterValue(dropforge::parameters::bassMode);
     rhythmMode = state.getRawParameterValue(dropforge::parameters::rhythmMode);
+    rhythmMono = state.getRawParameterValue(dropforge::parameters::rhythmMono);
+    rhythmDrop = state.getRawParameterValue(dropforge::parameters::rhythmDrop);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -131,6 +137,7 @@ void DropforgeProcessor::applyModes() noexcept
         return std::isfinite(value) ? std::clamp(static_cast<int>(std::lround(value)), 0, 3) : 0;
     };
     core.setModes(index(bassMode), index(rhythmMode));
+    core.setFurnaceOptions(readToggle(rhythmMono, false), readToggle(rhythmDrop, false));
 }
 
 void DropforgeProcessor::publishMeters() noexcept

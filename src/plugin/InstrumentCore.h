@@ -47,6 +47,12 @@ public:
         engine.setAnvilMode(anvil);
         engine.setFurnaceMode(furnace);
     }
+    // Furnace Mono and Drop (SPEC section 3); real-time safe, click-free.
+    void setFurnaceOptions(bool mono, bool drop) noexcept
+    {
+        engine.setFurnaceMono(mono);
+        engine.setFurnaceDrop(drop);
+    }
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }

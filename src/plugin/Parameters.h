@@ -13,4 +13,7 @@ inline constexpr auto rhythmLevel = "rhythm_level";
 // Modes A-D (SPEC section 12); all four choices exist from the first release.
 inline constexpr auto bassMode = "bass_mode";
 inline constexpr auto rhythmMode = "rhythm_mode";
+// Furnace options (SPEC section 3): a centred image, and the wall an octave down.
+inline constexpr auto rhythmMono = "rhythm_center"; // Ironstack used "rhythm_mono"
+inline constexpr auto rhythmDrop = "rhythm_drop";
 }

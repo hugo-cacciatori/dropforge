@@ -28,15 +28,16 @@ public:
     // With Anvil on, Furnace stays out of its range; alone it keeps its body.
     static constexpr double separationHz = 120.0, aloneHz = 40.0, separationGlideSeconds = 0.05;
     static constexpr double contourHz = 2800.0, contourQ = 0.7;
-    static constexpr double lowMidHz = 300.0, lowMidDb = -2.0, lowMidQ = 0.8;
+    static constexpr double lowMidHz = 300.0, defaultLowMidDb = -2.0, lowMidQ = 0.8;
     static constexpr double airHz = 10000.0;
     static constexpr double hashLowpassHz = 18000.0;
     static constexpr float outputGain = static_cast<float>(0.93 * outputTrim);
     static constexpr int controlInterval = 32;
 
     // The candidate's voicing (FurnaceDesign); takes effect at prepare().
-    void setVoicing(float drivePushDb, double contour, double airShelf) noexcept
+    void setVoicing(float drivePushDb, double contour, double airShelf, double lowMid = defaultLowMidDb) noexcept
     {
+        lowMidDb = std::isfinite(lowMid) ? lowMid : defaultLowMidDb;
         drivePush = std::pow(10.0f, (std::isfinite(drivePushDb) ? drivePushDb : 0.0f) / 20.0f);
         contourDb = std::isfinite(contour) ? contour : 3.0;
         airDb = std::isfinite(airShelf) ? airShelf : 3.0;
@@ -158,6 +159,7 @@ private:
     dsp_core::Oversampler4xFloat oversampler;
     static constexpr std::array<double, 4> separationQ{0.5097955, 0.6013449, 0.8999762, 2.5629154};
     dsp_core::Svf tightFilter, contour, lowMid, air, hashLowpass;
+    double lowMidDb = defaultLowMidDb;
     std::array<dsp_core::Svf, 4> separation{};
     dsp_core::LinearRamp tight, driveAmount, separationLog;
     dsp_core::FixedDelay<float, latencySamples> alignedGate, alignedLevel;

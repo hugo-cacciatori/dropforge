@@ -91,7 +91,7 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 7, "output plus power, level and mode for each layer");
+    require(source.getParameters().size() == 9, "output; power, level and mode for each layer; Furnace Mono and Drop");
     for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode})
     {
         const auto* mode = dynamic_cast<juce::AudioParameterChoice*>(source.parameterState().getParameter(id));

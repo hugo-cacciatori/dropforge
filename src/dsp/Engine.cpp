@@ -38,10 +38,12 @@ void Engine::reset() noexcept
     serial = 0;
     for (auto& wheel : bend)
         wheel.reset(1.0);
-    // A pending mode change is applied now: nothing sounds after a reset.
-    if (furnacePending >= 0) { furnaces[furnaceSlot].setDesign(furnaceForMode(furnacePending)); furnaceModeNow = furnacePending; }
+    // A pending change is applied now: nothing sounds after a reset.
+    if (furnaceSetup[furnaceSlot] != furnaceTarget) { furnaceSetup[furnaceSlot] = furnaceTarget; furnaces[furnaceSlot].setDesign(furnaceForMode(furnaceTarget.mode)); }
+    for (std::size_t slot = 0; slot < 2; ++slot) furnaces[slot].setDrop(furnaceSetup[slot].drop);
     if (anvilPending >= 0) { bassVoices[bassSlot].setGrit(gritForMode(anvilPending)); anvilModeNow = anvilPending; }
-    furnacePending = anvilPending = -1;
+    anvilPending = -1;
+    monoBlend.reset(monoOn ? 1.0 : 0.0);
     furnaceFade = bassFade = 0;
     for (auto& voice : bassVoices) voice.prepare(rate);
     for (auto& furnace : furnaces)
@@ -67,28 +69,37 @@ void Engine::clearRhythm() noexcept
     if (furnaceFade > 0) finishFurnaceFade();
 }
 
-void Engine::setFurnaceMode(int mode) noexcept
+void Engine::configureFurnace(std::size_t slot) noexcept
 {
-    mode = std::clamp(mode, 0, 3);
-    if (furnaceFade > 0) { furnacePending = mode == furnaceModeNow ? -1 : mode; return; }
-    if (mode == furnaceModeNow) return;
-    furnaceModeNow = mode;
-    auto& current = furnaces[furnaceSlot];
-    if (rhythmSuspended || !current.sounding())
+    furnaceSetup[slot] = furnaceTarget;
+    furnaces[slot].setDesign(furnaceForMode(furnaceTarget.mode));
+    furnaces[slot].setDrop(furnaceTarget.drop);
+    furnaces[slot].prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
+    furnaces[slot].setParameters(rhythmDrive, rhythmTight);
+}
+
+// Brings the playing Furnace to the chosen mode and Drop. During a fade the
+// change waits; the fade's end calls this again with the latest choice.
+void Engine::updateFurnace() noexcept
+{
+    if (furnaceFade > 0 || furnaceSetup[furnaceSlot] == furnaceTarget) return;
+    if (rhythmSuspended || !furnaces[furnaceSlot].sounding())
     {
-        // Silent: switch in place, as if the mode had always been chosen.
-        current.setDesign(furnaceForMode(mode));
-        current.prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
-        current.setParameters(rhythmDrive, rhythmTight);
+        // Silent: switch in place, as if it had always been chosen.
+        configureFurnace(furnaceSlot);
         return;
     }
     furnaceSlot = 1 - furnaceSlot;
-    auto& incoming = furnaces[furnaceSlot];
-    incoming.setDesign(furnaceForMode(mode));
-    incoming.prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
-    incoming.setParameters(rhythmDrive, rhythmTight);
-    startHeldRhythm(incoming);
+    configureFurnace(furnaceSlot);
+    startHeldRhythm(furnaces[furnaceSlot]);
     furnaceFade = modeFadeSamples;
+}
+
+void Engine::setFurnaceMono(bool on) noexcept
+{
+    if (on == monoOn) return;
+    monoOn = on;
+    monoBlend.setTarget(on ? 1.0 : 0.0, static_cast<int>(std::ceil(rate * 0.020)));
 }
 
 void Engine::setAnvilMode(int mode) noexcept
@@ -117,12 +128,7 @@ void Engine::finishFurnaceFade() noexcept
 {
     furnaceFade = 0;
     furnaces[1 - furnaceSlot].clear();
-    if (furnacePending >= 0)
-    {
-        const auto next = furnacePending;
-        furnacePending = -1;
-        setFurnaceMode(next);
-    }
+    updateFurnace();
 }
 
 void Engine::finishBassFade() noexcept
@@ -326,6 +332,18 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         }
         if (furnaceFade == 0) finishFurnaceFade();
     }
+    // Mono: fold the side into the centre, holding the level. Skipped while
+    // fully off so the stereo wall stays bit-identical.
+    if (monoOn || monoBlend.value() > 0.0)
+        for (std::size_t i = 0; i < samples; ++i)
+        {
+            const auto blend = monoBlend.next();
+            if (i >= rhythmCount) continue;
+            const auto mid = 0.5 * (rhythmLeft[i] + rhythmRight[i]), side = 0.5 * (rhythmLeft[i] - rhythmRight[i]);
+            const auto centre = mid * (1.0 + blend * (monoMakeup - 1.0));
+            rhythmLeft[i] = centre + (1.0 - blend) * side;
+            rhythmRight[i] = centre - (1.0 - blend) * side;
+        }
     if (!rhythmSuspended && !rhythmEnabled && rhythmCount > 0 && rhythmGain[rhythmCount - 1] == 0.0)
     {
         clearRhythm(); rhythmSuspended = true;

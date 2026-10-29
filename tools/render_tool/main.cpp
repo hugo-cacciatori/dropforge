@@ -25,6 +25,7 @@ struct Options
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
     std::string componentName = "all";
     std::string furnace = "a", anvil = "a";
+    bool furnaceMono = false, furnaceDrop = false;
 };
 
 double number(const char* text)
@@ -71,6 +72,8 @@ Options parse(int argc, char** argv)
             if (db < -24.0 || db > 6.0) throw std::runtime_error("Output must be -24 to +6 dB");
             options.outputDb = static_cast<float>(db);
         }
+        else if (flag == "--furnace-mono") options.furnaceMono = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--furnace-drop") options.furnaceDrop = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--anvil-level-db")
         {
             const auto db = number(argv[i + 1]);
@@ -194,6 +197,7 @@ void render(const Options& options)
     dropforge::InstrumentCore core;
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
     core.setModes(options.anvil[0] - 'a', options.furnace[0] - 'a');
+    core.setFurnaceOptions(options.furnaceMono, options.furnaceDrop);
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
     juce::AudioBuffer<float> audio(2, options.block);
@@ -245,6 +249,8 @@ void render(const Options& options)
     metrics->setProperty("layer_mask", juce::String(options.maskName));
     metrics->setProperty("furnace", juce::String(options.furnace));
     metrics->setProperty("anvil", juce::String(options.anvil));
+    metrics->setProperty("furnace_mono", options.furnaceMono);
+    metrics->setProperty("furnace_drop", options.furnaceDrop);
     metrics->setProperty("anvil_level_db", options.anvilLevelDb);
     metrics->setProperty("bass_component", juce::String(options.componentName));
     metrics->setProperty("split_hz", options.splitHz);
@@ -285,6 +291,7 @@ int main(int argc, char** argv)
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
                      "  [--furnace a|b|c|d] (Furnace mode; default a)\n"
                      "  [--anvil a|b|c|d] (Anvil mode; default a)\n"
+                     "  [--furnace-mono 0|1] [--furnace-drop 0|1] (Furnace options; default 0)\n"
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;

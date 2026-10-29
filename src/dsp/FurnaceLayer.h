@@ -29,6 +29,13 @@ public:
     struct Target { int channel, note; double frequency; bool held, active; };
 
     void setDesign(const FurnaceDesign& chosen) noexcept { design = chosen; }
+    // Drop (SPEC section 3): every voice an octave down, in unison with
+    // Anvil. Its voicing digs the low mids 2 dB deeper and lifts the contour
+    // 1.5 dB so dropped chords stay readable. Takes effect at prepare().
+    void setDrop(bool on) noexcept { drop = on; }
+    static constexpr double dropLowMidDb = -2.0, dropContourDb = 1.5;
+    // An octave lower reads about 1 LU quieter above Furnace's low-cut.
+    static constexpr float dropMakeup = 1.1220184543019633f; // +1 dB
     const FurnaceDesign& currentDesign() const noexcept { return design; }
 
     void prepare(double sampleRate, int attack, int release, int transition, bool anvilPresent) noexcept
@@ -37,7 +44,8 @@ public:
         attackSamples = attack; releaseSamples = release; transitionSamples = transition;
         for (auto& bus : buses)
         {
-            bus.setVoicing(design.drivePushDb, design.contourDb, design.airDb);
+            bus.setVoicing(design.drivePushDb, design.contourDb + (drop ? dropContourDb : 0.0), design.airDb,
+                           RhythmBus::defaultLowMidDb + (drop ? dropLowMidDb : 0.0));
             bus.setAnvilPresent(anvilPresent);
             bus.prepare(rate);
         }
@@ -87,7 +95,7 @@ public:
         voice.oscillators.setDesign(design.voice);
         voice.oscillators.reset(channel, note);
         voice.envelope.start();
-        voice.frequency = NoteRouter::frequency(note);
+        voice.frequency = NoteRouter::frequency(note) * (drop ? 0.5 : 1.0);
         // Pitch now; the voice's control updates then keep it following the bend.
         voice.oscillators.setPitch(voice.frequency * bendRatio, rate);
         voice.controlCountdown = controlBlock;
@@ -199,7 +207,7 @@ public:
             const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(design.sideGain);
             // Both sides share one envelope and velocity, so one gain gates both,
             // after every filter: the chop stays dead-stop hard.
-            const auto gain = buses[0].gain() * design.levelGain;
+            const auto gain = buses[0].gain() * design.levelGain * (drop ? dropMakeup : 1.0f);
             left[i] = gain * (mid + side);
             right[i] = gain * (mid - side);
         }
@@ -235,6 +243,7 @@ private:
         bool active() const noexcept { return envelope.active() || transitionRemaining > 0; }
     };
     FurnaceDesign design = FurnaceDesign::candidateA();
+    bool drop = false;
     std::array<Voice, voiceCount> voices{};
     std::array<RhythmBus, 2> buses;
     dsp_core::LinearRamp level;

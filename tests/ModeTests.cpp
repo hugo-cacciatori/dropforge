@@ -1,4 +1,5 @@
 #include "plugin/InstrumentCore.h"
+#include <dsp_core/Butterworth.h>
 #include <dsp_core/LoudnessMeter.h>
 #include <algorithm>
 #include <cmath>
@@ -170,6 +171,97 @@ void everyCombination()
     std::cout << "combinations=16 worst_peak_dbfs=" << 20.0 * std::log10(worst) << '\n';
     require(worst <= dropforge::Master::ceiling, "every combination stays under -1 dBFS at +6 dB Levels");
 }
+
+double loudness(const Stereo& audio)
+{
+    auto meter = std::make_unique<dsp_core::LoudnessMeter>();
+    meter->prepare(48000.0);
+    for (std::size_t i = 0; i < audio.left.size(); ++i) meter->process(audio.left[i], audio.right[i]);
+    return meter->shortTermMaxLufs();
+}
+
+// Furnace Mono and Drop (SPEC section 3).
+void monoAndDrop()
+{
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        Engine stereo, mono, dropped;
+        for (auto* engine : {&stereo, &mono, &dropped}) { engine->setFurnaceMode(mode); engine->prepare(48000.0); }
+        mono.setFurnaceMono(true);
+        mono.prepare(48000.0);
+        dropped.setFurnaceDrop(true);
+        for (auto* engine : {&stereo, &mono, &dropped}) play(*engine);
+        const auto wide = render(stereo, 4 * 48000, 512, LayerMask::rhythm);
+        const auto centred = render(mono, 4 * 48000, 512, LayerMask::rhythm);
+        require(centred.left == centred.right, "Furnace Mono is exactly centred");
+        const auto monoLu = loudness(centred) - loudness(wide);
+        // Drop: the lowest Furnace voice is in unison with Anvil.
+        double lowest = 1.0e9;
+        for (const auto& voice : dropped.rhythmTargets())
+            if (voice.held) lowest = std::min(lowest, voice.frequency);
+        require(std::abs(lowest - dropped.bassTarget().frequency) < 1.0e-9, "Drop puts Furnace's lowest note in unison with Anvil");
+        Engine bassOnly = dropped;
+        const auto wall = render(dropped, 4 * 48000, 512, LayerMask::rhythm);
+        const auto bass = render(bassOnly, 4 * 48000, 512, LayerMask::bass);
+        const auto dropLu = loudness(wall) - loudness(wide);
+        // Separation: Furnace below 100 Hz stays 20 dB under Anvil there.
+        std::array<dsp_core::Butterworth, 4> wallLow, bassLow;
+        for (auto* bank : {&wallLow, &bassLow})
+            for (auto& filter : *bank) filter.prepare(dsp_core::Butterworth::Type::lowpass, 100.0, 48000.0);
+        double wallEnergy = 0.0, bassEnergy = 0.0;
+        for (std::size_t i = 0; i < wall.left.size(); ++i)
+        {
+            double w = 0.5 * (wall.left[i] + wall.right[i]), b = bass.left[i];
+            for (auto& filter : wallLow) w = filter.next(w);
+            for (auto& filter : bassLow) b = filter.next(b);
+            if (i > 9600) { wallEnergy += w * w; bassEnergy += b * b; }
+        }
+        const auto separationDb = 10.0 * std::log10(wallEnergy / bassEnergy);
+        std::cout << "mode=" << static_cast<char>('A' + mode) << " mono_vs_stereo_lu=" << monoLu << " drop_vs_normal_lu=" << dropLu
+                  << " drop_separation_db=" << separationDb << '\n';
+        require(std::abs(monoLu) <= 1.0, "Mono keeps the wall's loudness within 1 LU");
+        require(std::abs(dropLu) <= 1.5, "Drop keeps the wall's loudness within 1.5 LU");
+        require(separationDb <= -20.0, "with Drop, Furnace below 100 Hz stays 20 dB under Anvil");
+    }
+    // Switching both while a chord is held: click-free and block-invariant.
+    float natural = 0.0f;
+    for (const auto drop : {false, true})
+    {
+        Engine steady;
+        steady.setFurnaceDrop(drop);
+        steady.prepare(48000.0);
+        play(steady);
+        const auto audio = render(steady, 24000, 512);
+        natural = std::max(natural, largestStep(audio, 12000, 24000));
+    }
+    const auto run = [](int block)
+    {
+        Engine engine;
+        engine.prepare(48000.0);
+        play(engine);
+        auto audio = render(engine, 12000, block);
+        engine.setFurnaceMono(true);
+        engine.setFurnaceDrop(true);
+        const auto after = render(engine, 12000, block);
+        audio.left.insert(audio.left.end(), after.left.begin(), after.left.end());
+        audio.right.insert(audio.right.end(), after.right.begin(), after.right.end());
+        return audio;
+    };
+    const auto a = run(512), b = run(1), c = run(73);
+    require(a.left == b.left && a.right == c.right, "Mono and Drop switches render identically at blocks 1, 73 and 512");
+    const auto step = largestStep(a, 11900, 14000);
+    std::cout << "mono_drop_switch_step=" << step << " natural_step=" << natural << '\n';
+    require(step <= 1.1f * natural, "switching Mono and Drop under a held chord does not click");
+    for (std::size_t i = 13000; i < a.left.size(); ++i)
+        require(a.left[i] == a.right[i] || std::abs(a.left[i] - a.right[i]) < 1.0e-6f, "Mono has fully centred after 20 ms");
+    // Off, Mono is a pure bypass: the stereo wall is unchanged bit for bit.
+    Engine plain, toggled;
+    for (auto* engine : {&plain, &toggled}) { engine->prepare(48000.0); play(*engine); }
+    toggled.setFurnaceMono(true);
+    toggled.setFurnaceMono(false);
+    const auto p = render(plain, 4800, 512), t = render(toggled, 4800, 512);
+    require(p.left == t.left && p.right == t.right, "Mono off leaves the stereo wall bit-identical");
+}
 }
 
 int main()
@@ -178,4 +270,5 @@ int main()
     switchWhilePlaying();
     loudnessMatched();
     everyCombination();
+    monoAndDrop();
 }
