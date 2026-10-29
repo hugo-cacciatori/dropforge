@@ -9,18 +9,22 @@ namespace dsp_core
 // Fixed 4x FIR interpolation -> caller's nonlinear stage -> FIR decimation.
 // The two symmetric 129-tap filters contribute exactly 32 base-rate samples.
 // No buffer size dependence, dynamic storage, or host/GUI dependency.
-class Oversampler4x
+// Sample is double for the bit-stable legacy paths, float for 32-bit chains;
+// the kernel is always designed in double, then stored as Sample.
+template <typename Sample>
+class BasicOversampler4x
 {
 public:
     static constexpr std::size_t factor = 4, kernelSize = 129;
     static constexpr int latencySamples = static_cast<int>((kernelSize - 1) / factor);
-    using Kernel = std::array<double, kernelSize>;
+    using Kernel = std::array<Sample, kernelSize>;
 
     void prepare() noexcept
     {
         constexpr double pi = 3.14159265358979323846;
         // Cutoff is 0.4 * base rate (0.1 * 4x rate). The transition band
         // trades ultrasonic bandwidth for measured rejection above base Nyquist.
+        std::array<double, kernelSize> design{};
         double sum = 0.0;
         for (std::size_t i = 0; i < kernelSize; ++i)
         {
@@ -28,16 +32,16 @@ public:
             const auto position = 2.0 * pi * static_cast<double>(i) / (kernelSize - 1);
             const auto window = 0.42 - 0.5 * std::cos(position) + 0.08 * std::cos(2.0 * position);
             const auto sinc = offset == 0.0 ? 0.2 : std::sin(0.2 * pi * offset) / (pi * offset);
-            kernel[i] = i == 0 || i == kernelSize - 1 ? 0.0 : window * sinc;
-            sum += kernel[i];
+            design[i] = i == 0 || i == kernelSize - 1 ? 0.0 : window * sinc;
+            sum += design[i];
         }
-        for (auto& coefficient : kernel) coefficient /= sum;
+        for (std::size_t i = 0; i < kernelSize; ++i) kernel[i] = static_cast<Sample>(design[i] / sum);
         reset();
     }
     void reset() noexcept
     {
-        inputHistory.fill(0.0);
-        outputHistory.fill(0.0);
+        inputHistory.fill(Sample{});
+        outputHistory.fill(Sample{});
         inputPosition = outputPosition = 0;
     }
     const Kernel& coefficients() const noexcept { return kernel; }
@@ -45,20 +49,20 @@ public:
     // Shape must be allocation-free, lock-free and noexcept. It is called for
     // every one of the four interpolated samples, including at zero drive.
     template <typename Shape>
-    double next(double input, Shape&& shape) noexcept
+    Sample next(Sample input, Shape&& shape) noexcept
     {
         inputHistory[inputPosition] = safe(input);
-        double result = 0.0;
+        Sample result{};
         for (std::size_t phase = 0; phase < factor; ++phase)
         {
-            double interpolated = 0.0;
+            Sample interpolated{};
             auto position = inputPosition;
             for (std::size_t tap = phase; tap < kernelSize; tap += factor)
             {
                 interpolated += kernel[tap] * inputHistory[position];
                 position = previous(position, inputHistory.size());
             }
-            outputHistory[outputPosition] = safe(shape(interpolated * factor));
+            outputHistory[outputPosition] = safe(shape(interpolated * static_cast<Sample>(factor)));
             // Decimate at phase zero, not the last phase: this keeps the FIR
             // group delay an integer and avoids a fractional dry-path mismatch.
             if (phase == 0)
@@ -80,12 +84,14 @@ private:
     {
         return position == 0 ? size - 1 : position - 1;
     }
-    static double safe(double value) noexcept
+    static Sample safe(Sample value) noexcept
     {
-        return std::isfinite(value) && std::abs(value) >= 1.0e-30 ? value : 0.0;
+        return std::isfinite(value) && std::abs(value) >= static_cast<Sample>(1.0e-30) ? value : Sample{};
     }
     Kernel kernel{}, outputHistory{};
-    std::array<double, (kernelSize + factor - 1) / factor> inputHistory{};
+    std::array<Sample, (kernelSize + factor - 1) / factor> inputHistory{};
     std::size_t inputPosition = 0, outputPosition = 0;
 };
+using Oversampler4x = BasicOversampler4x<double>;
+using Oversampler4xFloat = BasicOversampler4x<float>;
 }

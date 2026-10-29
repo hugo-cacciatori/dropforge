@@ -165,6 +165,8 @@ double fadeTests(double rate)
             engine->noteOn(1, 57, 127); advance(*engine, 2048);
         }
         faded.setLayersEnabled(!disableBass, disableBass);
+        double fadedPower = 0.0, referencePower = 0.0, worstRhythmStep = 0.0, steadyRhythmStep = 0.0;
+        float previousFaded = 0.0f, previousReference = 0.0f;
         for (int i = 0; i < length + 20; ++i)
         {
             if (i == length / 2) faded.setLayersEnabled(!disableBass, disableBass); // No fade restart.
@@ -177,8 +179,26 @@ double fadeTests(double rate)
             const auto previousGain = std::max(0.0, 1.0 - std::max(0, i - 1) / static_cast<double>(length));
             worstControlStep = std::max(worstControlStep, std::abs(baseline * (gain - previousGain)));
             if (disableBass)
-                require(a.rhythmLeft == b.rhythmLeft && a.rhythmRight == b.rhythmRight, "bass enable cannot alter rhythm");
+            {
+                // SPEC section 4: without Anvil, Furnace's low cut glides from
+                // 120 to 40 Hz so it keeps its own body. An A3 sits above both
+                // cuts, so its level holds; the glide must not click.
+                fadedPower += static_cast<double>(a.rhythmLeft) * a.rhythmLeft;
+                referencePower += static_cast<double>(b.rhythmLeft) * b.rhythmLeft;
+                if (i > 0)
+                {
+                    worstRhythmStep = std::max(worstRhythmStep, static_cast<double>(std::abs(a.rhythmLeft - previousFaded)));
+                    steadyRhythmStep = std::max(steadyRhythmStep, static_cast<double>(std::abs(b.rhythmLeft - previousReference)));
+                }
+                previousFaded = a.rhythmLeft; previousReference = b.rhythmLeft;
+            }
             else require(a.bass == b.bass, "rhythm disable preserves the current bass root");
+        }
+        if (disableBass)
+        {
+            require(std::abs(10.0 * std::log10(fadedPower / referencePower)) < 1.0,
+                    "switching Anvil off keeps Furnace's level above the low cut");
+            require(worstRhythmStep <= 1.25 * steadyRhythmStep, "the Furnace low-cut glide does not click");
         }
     }
     // Reverse a fade before zero. No reset or gain jump at the reversal.

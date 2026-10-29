@@ -218,7 +218,14 @@ void polyphonyAndRetriggers()
 
     engine.prepare(48000.0);
     engine.noteOn(1, 33, 127);
-    auto previous = render(engine, 512).back();
+    // A click is a step larger than the held note's own waveform makes: a
+    // bright, full-band Furnace has large natural steps, a click exceeds them.
+    render(engine, 4800);
+    const auto steady = render(engine, 9600);
+    double steadyStep = 0.0;
+    for (std::size_t i = 1; i < steady.size(); ++i)
+        steadyStep = std::max(steadyStep, std::abs(static_cast<double>(steady[i] - steady[i - 1])));
+    auto previous = steady.back();
     double maximumStep = 0.0;
     for (int iteration = 0; iteration < 1000; ++iteration)
     {
@@ -230,7 +237,8 @@ void polyphonyAndRetriggers()
     }
     // The post-sum FIR/IIR stages continue evolving through the retrigger;
     // equality with the prior output sample no longer describes continuity.
-    require(maximumStep < 0.01, "filtered rapid retriggers retain a bounded boundary step");
+    std::cout << "retrigger_step=" << maximumStep << " steady_step=" << steadyStep << '\n';
+    require(maximumStep <= 1.25 * steadyStep, "rapid retriggers never step beyond the held waveform's own steps");
     engine.noteOff(1, 33);
     requireSilence(engine);
     std::cout << "rapid_retrigger_boundary_step=" << maximumStep << '\n';

@@ -22,7 +22,9 @@ void Engine::reset() noexcept
     for (auto& wheel : bend)
         wheel.reset(1.0);
     bassVoice.prepare(rate);
-    for (auto& bus : rhythmBus) bus.prepare(rate);
+    for (auto& bus : rhythmBus) { bus.setAnvilPresent(bassEnabled); bus.prepare(rate); }
+    // Mono low end: the side signal loses everything below about 150 Hz.
+    sideHighpass.set(dsp_core::Svf::Type::highpass, monoBelowHz, rate);
     clearRhythm();
     bassChannel = 1;
     bassBendOffset.reset(0.0);
@@ -44,6 +46,7 @@ void Engine::clearRhythm() noexcept
         voice.envelope.prepare(attackSamples, releaseSamples);
     }
     for (auto& bus : rhythmBus) bus.reset();
+    sideHighpass.reset();
     rhythmLevel.reset(1.0); rhythmLevelTarget = 1.0; rhythmWasActive = false;
 }
 
@@ -55,6 +58,13 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
     bassEnabled = bass;
     rhythmEnabled = rhythm;
     const auto change = router.setBassRule(rhythm ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
+    for (auto& bus : rhythmBus)
+    {
+        bus.setAnvilPresent(bass);
+        // A silent, cleared Furnace starts at its new separation cut, as a
+        // freshly played chord would, instead of gliding in from the old one.
+        if (rhythmSuspended) bus.reset();
+    }
     if (bass != bassWasEnabled)
     {
         bassFade.setTarget(bass ? 1.0 : 0.0, fadeSamples);
@@ -106,7 +116,7 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
     voice.envelope.start();
     voice.frequency = NoteRouter::frequency(note);
     // Pitch now; the voice's control updates then keep it following the bend.
-    voice.oscillators.setPitch(voice.frequency * bend[static_cast<std::size_t>(channel - 1)].value(), rate, 0);
+    voice.oscillators.setPitch(voice.frequency * bend[static_cast<std::size_t>(channel - 1)].value(), rate);
     voice.controlCountdown = controlBlock;
     voice.velocity = std::min(velocity, 127) / 127.0;
     voice.channel = channel;
@@ -273,7 +283,7 @@ void Engine::renderRhythm(int count) noexcept
             // in steps of 0.7 ms or less, too fine to hear as stepping.
             if (voice.controlCountdown == 0)
             {
-                voice.oscillators.setPitch(voice.frequency * ratio[i], rate, controlBlock);
+                voice.oscillators.setPitch(voice.frequency * ratio[i], rate);
                 voice.controlCountdown = controlBlock;
             }
             --voice.controlCountdown;
@@ -314,14 +324,21 @@ void Engine::renderRhythm(int count) noexcept
         }
         rhythmWasActive = velocity > 0.0;
         const auto level = rhythmLevel.next();
-        const auto processedLeft = rhythmBus[0].next(sumLeft[i] / level, strongestEnvelope[i], level);
-        const auto processedRight = rhythmBus[1].next(sumRight[i] / level, strongestEnvelope[i], level);
+        const auto envelope = static_cast<float>(strongestEnvelope[i]);
+        const auto restore = static_cast<float>(level), normalize = static_cast<float>(1.0 / level);
+        const auto processedLeft = rhythmBus[0].next(sumLeft[i] * normalize, envelope, restore);
+        const auto processedRight = rhythmBus[1].next(sumRight[i] * normalize, envelope, restore);
         // Width still comes from independent synthesis. This final bounded
         // blend reserves common energy after nonlinear processing as well.
-        const auto mid = 0.5 * (processedLeft + processedRight);
-        const auto side = 0.5 * (processedLeft - processedRight) * RhythmOscillators::spread;
-        rhythmLeft[i] = mid + side;
-        rhythmRight[i] = mid - side;
+        // Mono below about 150 Hz: chords stay solid on a club system or a
+        // phone speaker, and the side signal never fights Anvil.
+        const auto mid = 0.5f * (processedLeft + processedRight);
+        const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(RhythmOscillators::spread);
+        // Both sides share one envelope and velocity, so one gain gates both,
+        // after every filter: the chop stays dead-stop hard.
+        const auto gain = rhythmBus[0].gain();
+        rhythmLeft[i] = gain * (mid + side);
+        rhythmRight[i] = gain * (mid - side);
     }
 }
 

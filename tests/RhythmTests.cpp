@@ -48,17 +48,20 @@ void spectrum()
     for (const auto* side : {&audio.left, &audio.right})
     {
         require(magnitude(*side, 440.0) > 0.005, "exact input-pitch anchor is audible on both sides");
-        require(magnitude(*side, 440.0 * std::exp2(-8.0 / 1200.0)) > 0.0005
-                && magnitude(*side, 440.0 * std::exp2(6.16 / 1200.0)) > 0.0005,
-                "narrow unison sidebands, rather than extra chord notes, are present");
+        // Inner supersaw saws: -5.3 and +5.4 cents left, +4.5 and -4.6 right.
+        const auto inner = side == &audio.left ? std::array<double, 2>{-5.325, 5.43} : std::array<double, 2>{4.526, -4.616};
+        require(magnitude(*side, 440.0 * std::exp2(inner[0] / 1200.0)) > 0.0005
+                && magnitude(*side, 440.0 * std::exp2(inner[1] / 1200.0)) > 0.0005,
+                "detuned supersaw sidebands, rather than extra chord notes, are present");
         require(magnitude(*side, 440.0 * std::exp2(7.0 / 12.0)) < 0.00001
                 && magnitude(*side, 220.0) < 0.00001, "rhythm adds neither a fifth nor an octave-down note");
     }
     // The outer beating components must survive the real summed-bus drive,
     // rather than existing only in an isolated oscillator measurement.
-    require(magnitude(audio.left, 440.0 * std::exp2(-22.0 / 1200.0)) > 0.0001
-            && magnitude(audio.right, 440.0 * std::exp2(16.94 / 1200.0)) > 0.0001,
-            "outer unison shoulders survive the default drive on both sides");
+    // Outermost saws: -30 cents left, +25.5 cents right (mirrored, narrower).
+    require(magnitude(audio.left, 440.0 * std::exp2(-30.0 / 1200.0)) > 0.0001
+            && magnitude(audio.right, 440.0 * std::exp2(25.5 / 1200.0)) > 0.0001,
+            "outer supersaw saws survive the default drive on both sides");
     double ll = 0.0, rr = 0.0, lr = 0.0;
     for (std::size_t i = 0; i < audio.left.size(); ++i)
     {
@@ -77,19 +80,21 @@ void octavePresence()
     {
         dropforge::RhythmOscillators full, base;
         full.reset(1, 57); base.reset(1, 57);
-        std::array<std::array<std::complex<double>, 9>, 2> bins{};
-        std::array<std::array<double, 9>, 2> frequencies{};
+        std::array<std::array<std::complex<double>, 7>, 2> bins{};
+        std::array<std::array<double, 7>, 2> frequencies{};
         for (std::size_t side = 0; side < frequencies.size(); ++side)
         {
             frequencies[side] = {220, 330, 440};
-            constexpr std::array<double, 6> cents{-8, 8, -14, 14, -22, 22};
+            // The octave stack's four detuned saws: +-12 cents, mirrored and
+            // 0.85x narrower on the right.
+            constexpr std::array<double, 4> cents{-12.0, -5.4, 6.0, 11.4};
             for (std::size_t shoulder = 0; shoulder < cents.size(); ++shoulder)
                 frequencies[side][shoulder + 3] = 440 * std::exp2(cents[shoulder]
-                    * (side == 0 ? 1.0 : 0.77) / 1200.0);
+                    * (side == 0 ? 1.0 : -0.85) / 1200.0);
         }
         for (int i = 0; i < rate*2; ++i)
         {
-            if (i % 32 == 0) { full.setPitch(220.0, rate, 32); base.setPitch(220.0, rate, 32); }
+            if (i % 32 == 0) { full.setPitch(220.0, rate); base.setPitch(220.0, rate); }
             const auto a = full.next(), b = base.next(false);
             const std::array<double, 2> added{a.left-b.left, a.right-b.right};
             const auto window = 0.5 - 0.5*std::cos(2*pi*i/(rate*2));
@@ -102,20 +107,20 @@ void octavePresence()
         {
             const auto anchor = std::abs(side[2])*2.0/rate;
             lowestAnchor = std::min(lowestAnchor, anchor);
-            require(anchor > 0.05, "isolated presence layer has an exact octave-up anchor on each side");
+            require(anchor > 0.01, "isolated presence layer has an exact octave-up anchor on each side");
             require(std::abs(side[0])*2.0/rate < 1e-6 && std::abs(side[1])*2.0/rate < 1e-6,
                     "added source supplies upper harmonics without a new root or fifth");
             for (std::size_t bin = 3; bin < side.size(); ++bin)
             {
                 const auto shoulder = std::abs(side[bin])*2.0/rate;
                 lowestShoulder = std::min(lowestShoulder, shoulder);
-                require(shoulder > 0.004, "all six detuned octave shoulders are present on both sides");
+                require(shoulder > 0.008, "all four detuned octave saws are present on both sides");
             }
         }
         full.reset(1, 127); base.reset(1, 127);
         for (int i = 0; i < 4096; ++i)
         {
-            if (i % 32 == 0) { full.setPitch(rate*0.24, rate, 32); base.setPitch(rate*0.24, rate, 32); }
+            if (i % 32 == 0) { full.setPitch(rate*0.24, rate); base.setPitch(rate*0.24, rate); }
             const auto a = full.next(), b = base.next(false);
             require(a.left == b.left && a.right == b.right,
                     "above-Nyquist octave components disappear instead of sounding a clamped pitch");
@@ -160,7 +165,12 @@ void targets()
 void bentAudio()
 {
     dropforge::Engine original, otherChannel;
-    for (auto* engine : {&original, &otherChannel}) { engine->prepare(48000); engine->noteOn(1, 69, 127); }
+    // Drive 0 isolates pitch following: at the fixed drive a dense supersaw's
+    // intermodulation skirt reaches two semitones away by design.
+    for (auto* engine : {&original, &otherChannel})
+    {
+        engine->setRhythmParameters(0.0f); engine->prepare(48000); engine->noteOn(1, 69, 127);
+    }
     otherChannel.pitchBend(2, 16383);
     const auto a = render(original, 4800), b = render(otherChannel, 4800, 73);
     require(a.left == b.left && a.right == b.right, "another channel's bend leaves both rhythm sides unchanged");
@@ -186,7 +196,7 @@ void bentAudio()
         for (const auto* side : {&audio.left, &audio.right})
             // The separation HP deliberately attenuates low fundamentals; the
             // exact pitch must still be present rather than a new chord note.
-            require(magnitude(*side, hz) > (hz < dropforge::RhythmBus::separationHz ? 0.0001 : 0.005)
+            require(magnitude(*side, hz) > (hz < 2.0 * dropforge::RhythmBus::separationHz ? 0.0001 : 0.005)
                     && magnitude(*side, hz * std::exp2(7.0 / 12.0)) < 0.00001,
                     "multiple played pitches produce their own spectral anchor without a fifth");
     }

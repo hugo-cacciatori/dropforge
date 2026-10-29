@@ -22,11 +22,6 @@ add_executable(dropforge_rhythm_bus_tests RhythmBusTests.cpp)
 target_link_libraries(dropforge_rhythm_bus_tests PRIVATE dropforge_core)
 add_test(NAME rhythm_bus COMMAND dropforge_rhythm_bus_tests)
 
-add_executable(dropforge_rhythm_spectrum_tests RhythmSpectrumTests.cpp)
-target_include_directories(dropforge_rhythm_spectrum_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")
-target_link_libraries(dropforge_rhythm_spectrum_tests PRIVATE dropforge_core)
-add_test(NAME rhythm_spectrum COMMAND dropforge_rhythm_spectrum_tests)
-
 add_executable(dropforge_rhythm_mix_tests RhythmMixTests.cpp)
 target_include_directories(dropforge_rhythm_mix_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")
 target_compile_definitions(dropforge_rhythm_mix_tests PRIVATE

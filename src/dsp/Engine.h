@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <dsp_core/FixedEnvelope.h>
+#include <dsp_core/Svf.h>
 #include "BassVoice.h"
 #include "NoteRouter.h"
 #include "RhythmOscillators.h"
@@ -82,6 +83,8 @@ private:
     bool rhythmWasActive = false;
     bool bassEnabled = true, rhythmEnabled = true;
     bool bassSuspended = false, rhythmSuspended = false;
+    static constexpr double monoBelowHz = 150.0;
+    dsp_core::Svf sideHighpass;
     dsp_core::LinearRamp bassFade, rhythmFade, bassBendOffset;
     dsp_core::LinearRamp bassMixLevel, rhythmMixLevel;
     double bassMixTarget = 1.0, rhythmMixTarget = 1.0;

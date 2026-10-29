@@ -8,131 +8,98 @@
 
 namespace dropforge
 {
-// One played Furnace note: independent left and right groups of seven
-// detuned components, each a saw/pulse blend, plus the owner's octave-up
-// presence layer synthesized inside the voice (no extra MIDI notes).
-//
-// All of it reads the shared band-limited saw bank. The 0.7 saw + 0.3 pulse
-// blend collapses to saw(phase) - 0.3 x saw(phase - width), so a component
-// costs two table reads, and an octave component one. Pitch, pulse width and
-// the octave fade are control-rate values set by setPitch().
+// One played Furnace note (SPEC section 4): per side a supersaw stack, an
+// octave-up stack for presence, and a square body for mid weight, all read
+// from the shared band-limited saw bank. Left and right stacks have their own
+// phases and slightly different detune, so the width comes from synthesis.
+// Pitch, detune and the octave fade are control-rate values set by setPitch().
 class RhythmOscillators
 {
 public:
     struct Stereo { float left = 0.0f, right = 0.0f; };
-    static constexpr int components = 7;
-    static constexpr double detuneCents = 8.0;
-    // Retain the common/mono signal while allowing more of the independent
-    // groups' difference through after drive. No delay or new pitch movement.
+    struct Design
+    {
+        double spreadCents = 30.0;   // outermost main saw, before the side scaling
+        double octaveDb = -8.0;      // octave stack against the main stack
+        double octaveSpreadCents = 12.0;
+        double bodyDb = -12.0;       // square body against the main stack
+    };
+    static constexpr int mainCount = 7, octaveCount = 5;
+    // Final post-drive side blend (applied by Engine after all nonlinear stages).
     static constexpr double spread = 0.84;
-    static constexpr double octaveMix = 0.20;
+
+    void setDesign(const Design& next) noexcept { design = next; }
 
     void reset(int channel, int note) noexcept
     {
-        std::uint32_t seed = 0x49524f4eu ^ (static_cast<std::uint32_t>(channel) << 16)
-                                            ^ static_cast<std::uint32_t>(note);
-        // Fixed integer PRNG, independent of voice slot and callback size.
-        const auto nextSeed = [&seed]() noexcept { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed; };
-        std::uint32_t anchor = 0;
-        for (std::size_t side = 0; side < 2; ++side)
-            for (std::size_t component = 0; component < 3; ++component)
-            {
-                auto phase = nextSeed();
-                if (side == 0 && component == 1) anchor = phase;
-                // Exact-pitch anchors must not land almost in phase or opposed
-                // by chance. A quarter cycle retains independent synthesis and
-                // a stable common/side balance, without delaying either bus.
-                if (side == 1 && component == 1) phase = anchor + 0x40000000u;
-                main[side][component].reset(phase);
-            }
-        // Quieter outer shoulders add beating without new intervals, a delayed
-        // duplicate, or modulation of the played pitch anchor.
-        for (auto& side : main)
-            for (std::size_t component = 3; component < components; ++component)
-                side[component].reset(nextSeed());
-        motionPhase[0] = static_cast<double>(seed) / 4294967296.0;
-        motionPhase[1] = motionPhase[0] + 0.25;
-        if (motionPhase[1] >= 1.0) motionPhase[1] -= 1.0;
-        for (std::size_t side = 0; side < 2; ++side)
+        // Phases depend on the key only, never on the voice slot or block size.
+        const auto key = [channel, note](std::uint32_t layer, std::uint32_t index) noexcept {
+            return dsp_core::seededPhase(static_cast<std::uint32_t>(channel), static_cast<std::uint32_t>(note), layer, index);
+        };
+        for (std::uint32_t side = 0; side < 2; ++side)
         {
-            const auto cents = detuneCents * (side == 0 ? 1.0 : 0.77);
-            const auto scale = side == 0 ? 1.0 : 0.77;
-            ratios[side] = {std::exp2(-cents / 1200.0), 1.0, std::exp2(cents / 1200.0),
-                            std::exp2(-14.0 * scale / 1200.0), std::exp2(14.0 * scale / 1200.0),
-                            std::exp2(-22.0 * scale / 1200.0), std::exp2(22.0 * scale / 1200.0)};
+            for (std::uint32_t i = 0; i < mainCount; ++i) main[side][i].reset(key(side, i));
+            for (std::uint32_t i = 0; i < octaveCount; ++i) octave[side][i].reset(key(2 + side, i));
         }
-        for (std::size_t side = 0; side < 2; ++side)
-            for (std::size_t component = 0; component < 3; ++component)
-            {
-                auto phase = nextSeed();
-                if (side == 0 && component == 1) anchor = phase;
-                if (side == 1 && component == 1) phase = anchor + 0x40000000u;
-                octave[side][component].reset(phase);
-            }
-        // Spread the detuned half of the octave layer over six voices for more
-        // beating without raising its level.
-        for (auto& side : octave)
-            for (std::size_t component = 3; component < components; ++component)
-                side[component].reset(nextSeed());
+        // One body for both sides keeps the mid weight centred and mono-solid.
+        body.reset(key(4, 0));
     }
 
-    // Control rate: pitch for every component, the slow pulse-width motion
-    // advanced by `samples`, and the octave layer's fade near the top.
-    void setPitch(double frequency, double rate, int samples) noexcept
+    // Control rate: pitch for every oscillator and the octave stack's fade.
+    void setPitch(double frequency, double rate) noexcept
     {
         const auto& bank = dsp_core::WavetableBank::saw();
         for (std::size_t side = 0; side < 2; ++side)
         {
-            // Gentle, independent harmonic motion supplies dry ensemble colour;
-            // it never moves the exact-pitch targets or lengthens the envelope.
-            pulseOffset[side] = dsp_core::WavetableOscillator::phaseOffset(
-                0.5 + 0.14 * std::sin(6.28318530717958647692 * motionPhase[side]));
-            motionPhase[side] += (side == 0 ? 0.23 : 0.31) * samples / rate;
-            motionPhase[side] -= std::floor(motionPhase[side]);
-            for (std::size_t component = 0; component < components; ++component)
-            {
-                const auto hz = frequency * ratios[side][component];
-                main[side][component].setFrequency(bank, hz, rate);
-                octave[side][component].setFrequency(bank, 2.0 * hz, rate);
-                // Smoothly remove the added layer before the band limit could
-                // fold it into an unrelated tone at the keyboard's top.
-                const auto fade = std::clamp((0.45 - 2.0 * hz / rate) / 0.15, 0.0, 1.0);
-                octaveGain[side][component] = static_cast<float>(octaveMix * octaveWeights[component]
-                                                                 * fade * fade * (3.0 - 2.0 * fade));
-            }
+            // The right stack is mirrored and a little narrower, so the two
+            // sides never beat in step: a wide, moving image without delay.
+            const auto scale = side == 0 ? 1.0 : -0.85;
+            for (std::size_t i = 0; i < mainCount; ++i)
+                main[side][i].setFrequency(bank, frequency * cents(design.spreadCents * scale * mainOffsets[i]), rate);
+            for (std::size_t i = 0; i < octaveCount; ++i)
+                octave[side][i].setFrequency(bank, 2.0 * frequency
+                    * cents(design.octaveSpreadCents * scale * octaveOffsets[i]), rate);
         }
+        body.setFrequency(bank, frequency, rate);
+        // Fade the octave stack out before the band limit near the top key.
+        const auto fade = std::clamp((0.45 - 2.0 * frequency / rate) / 0.15, 0.0, 1.0);
+        octaveGain = static_cast<float>(std::pow(10.0, design.octaveDb / 20.0) / octaveCount
+                                        * fade * fade * (3.0 - 2.0 * fade));
+        bodyGain = static_cast<float>(std::pow(10.0, design.bodyDb / 20.0));
     }
 
     // Diagnostic isolation only: choose octave presence once before a phrase.
     Stereo next(bool octavePresence = true) noexcept
     {
+        // A pulse at width 0.5 is two saw reads half a cycle apart.
+        const auto square = body.nextPulse(0.5);
         std::array<float, 2> sum{};
         for (std::size_t side = 0; side < 2; ++side)
         {
-            for (std::size_t component = 0; component < components; ++component)
-                sum[side] += weights[component] * main[side][component].nextBlend(pulseOffset[side], 0.3f);
-            if (octavePresence)
-                for (std::size_t component = 0; component < components; ++component)
-                    sum[side] += octaveGain[side][component] * octave[side][component].next();
-            else
-                for (auto& oscillator : octave[side]) oscillator.next();
+            for (std::size_t i = 0; i < mainCount; ++i) sum[side] += mainWeights[i] * main[side][i].next();
+            float presence = 0.0f;
+            for (auto& oscillator : octave[side]) presence += oscillator.next();
+            if (octavePresence) sum[side] += octaveGain * presence;
+            sum[side] += bodyGain * 0.5f * square;
         }
-        // Keep the independent groups separate through summed-bus drive.
-        // Engine applies Spread after filtering so drive cannot narrow it.
         return {sum[0], sum[1]};
     }
 
 private:
-    // Unity weight sum keeps the ensemble mix fixed; the anchor retains its
-    // original weight while energy is distributed over six detuned components.
-    static constexpr std::array<float, components> weights{1.0f/4.0f, 1.0f/3.0f, 1.0f/4.0f,
-        1.0f/24.0f, 1.0f/24.0f, 1.0f/24.0f, 1.0f/24.0f};
-    static constexpr std::array<double, components> octaveWeights{1.0/12.0, 0.5, 1.0/12.0,
-        1.0/12.0, 1.0/12.0, 1.0/12.0, 1.0/12.0};
-    std::array<std::array<dsp_core::WavetableOscillator, components>, 2> main{}, octave{};
-    std::array<std::array<double, components>, 2> ratios{};
-    std::array<std::array<float, components>, 2> octaveGain{};
-    std::array<double, 2> motionPhase{};
-    std::array<std::uint32_t, 2> pulseOffset{0x80000000u, 0x80000000u};
+    static double cents(double value) noexcept { return std::exp2(value / 1200.0); }
+    // The JP-8000 supersaw's uneven detune positions, normalized to +-1:
+    // dense near the centre, wide at the edges, never symmetric.
+    static constexpr std::array<double, mainCount> mainOffsets{
+        -1.0, -0.5716, -0.1775, 0.0, 0.1810, 0.5650, 0.9767};
+    static constexpr std::array<double, octaveCount> octaveOffsets{-1.0, -0.45, 0.0, 0.5, 0.95};
+    // A louder centre saw (about 4 dB over each side saw) keeps the pitch
+    // focused; the weights sum to one so the stack's peak stays bounded.
+    static constexpr std::array<float, mainCount> mainWeights{
+        0.1313f, 0.1313f, 0.1313f, 0.2122f, 0.1313f, 0.1313f, 0.1313f};
+    Design design{};
+    std::array<std::array<dsp_core::WavetableOscillator, mainCount>, 2> main{};
+    std::array<std::array<dsp_core::WavetableOscillator, octaveCount>, 2> octave{};
+    dsp_core::WavetableOscillator body;
+    float octaveGain = 0.0f, bodyGain = 0.0f;
 };
 }
