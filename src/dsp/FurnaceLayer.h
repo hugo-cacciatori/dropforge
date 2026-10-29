@@ -30,12 +30,12 @@ public:
 
     void setDesign(const FurnaceDesign& chosen) noexcept { design = chosen; }
     // Drop (SPEC section 3): every voice an octave down, in unison with
-    // Anvil. Its voicing digs the low mids 2 dB deeper and lifts the contour
-    // 1.5 dB so dropped chords stay readable. Takes effect at prepare().
+    // Anvil. The separation cut opens to 40 Hz (as without Anvil) so the
+    // dropped roots really sound with Anvil; the voicing digs the low mids
+    // 2 dB deeper and lifts the contour 1.5 dB so dropped chords stay
+    // readable. Takes effect at prepare().
     void setDrop(bool on) noexcept { drop = on; }
-    static constexpr double dropLowMidDb = -2.0, dropContourDb = 1.5;
-    // An octave lower reads about 1 LU quieter above Furnace's low-cut.
-    static constexpr float dropMakeup = 1.1220184543019633f; // +1 dB
+    static constexpr double dropLowMidDb = -2.0, dropContourDb = 1.5, dropLowBoostDb = 7.0;
     const FurnaceDesign& currentDesign() const noexcept { return design; }
 
     void prepare(double sampleRate, int attack, int release, int transition, bool anvilPresent) noexcept
@@ -47,7 +47,9 @@ public:
             bus.setVoicing(design.drivePushDb, design.contourDb + (drop ? dropContourDb : 0.0), design.airDb,
                            design.lowMidDb + (drop ? dropLowMidDb : 0.0));
             bus.setExtremes(design.foldAmount, design.hashHz);
-            bus.setAnvilPresent(anvilPresent);
+            bus.setTightScale(drop ? 0.5 : 1.0);
+            bus.setLowBoost(drop ? dropLowBoostDb : 0.0);
+            bus.setAnvilPresent(anvilPresent && !drop);
             bus.prepare(rate);
         }
         // Mono low end: the side signal loses everything below about 150 Hz.
@@ -81,7 +83,7 @@ public:
     {
         for (auto& bus : buses)
         {
-            bus.setAnvilPresent(present);
+            bus.setAnvilPresent(present && !drop);
             // A silent, cleared Furnace starts at its new separation cut, as a
             // freshly played chord would, instead of gliding in from the old one.
             if (restart) bus.reset();
@@ -208,7 +210,7 @@ public:
             const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(design.sideGain);
             // Both sides share one envelope and velocity, so one gain gates both,
             // after every filter: the chop stays dead-stop hard.
-            const auto gain = buses[0].gain() * design.levelGain * (drop ? dropMakeup : 1.0f);
+            const auto gain = buses[0].gain() * design.levelGain;
             left[i] = gain * (mid + side);
             right[i] = gain * (mid - side);
         }

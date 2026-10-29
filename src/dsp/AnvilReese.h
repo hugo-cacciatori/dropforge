@@ -18,7 +18,7 @@ class AnvilReese
 {
 public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
-    static constexpr double detuneCents = 8.0, destroyedDetuneCents = 14.0;
+    static constexpr double detuneCents = 8.0, destroyedDetuneCents = 20.0;
 
     // Destruction (SPEC section 12): a wider detune (faster, deeper beats)
     // and a snarling drive, with a tighter 2.5 kHz top so the sub stays the
@@ -71,7 +71,7 @@ public:
     // Amount (Anvil's drive, 0..1) sets how much edge the drive adds.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = (1.2f + 2.8f * amount) * (destroyed ? 2.5f : 1.0f);
+        const auto gain = (1.2f + 2.8f * amount) * (destroyed ? 5.0f : 1.0f);
         return oversampler.next(input, [gain](float value) noexcept { return std::tanh(gain * value); });
     }
     float cleanup(float input) noexcept

@@ -78,9 +78,7 @@ public:
     // like a mode change.
     void setFurnaceDestruction(bool on) noexcept { furnaceTarget.destroy = on; updateFurnace(); }
     void setAnvilDestruction(bool on) noexcept { anvilTarget.destroy = on; updateAnvil(); }
-    // Mono's level hold: centring loses the side signal's power (about
-    // 2 dB on held chords), restored on the mid so Mono is not quieter.
-    static constexpr double monoMakeup = 1.2589254117941673; // +2 dB
+
     int anvilMode() const noexcept { return anvilTarget.mode; }
     // Test hook, not real-time: a custom Furnace design for the playing slot,
     // taking effect at prepare() or reset().

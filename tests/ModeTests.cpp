@@ -204,24 +204,27 @@ void monoAndDrop()
         const auto wall = render(dropped, 4 * 48000, 512, LayerMask::rhythm);
         const auto bass = render(bassOnly, 4 * 48000, 512, LayerMask::bass);
         const auto dropLu = loudness(wall) - loudness(wide);
-        // Separation: Furnace below 100 Hz stays 20 dB under Anvil there.
-        std::array<dsp_core::Butterworth, 4> wallLow, bassLow;
-        for (auto* bank : {&wallLow, &bassLow})
+        // Unison (owner, round 2): with Drop the wall's roots must really
+        // sound in Anvil's octave, below 100 Hz, where the normal wall is cut.
+        std::array<dsp_core::Butterworth, 4> wallLow, normalLow, bassLow;
+        for (auto* bank : {&wallLow, &normalLow, &bassLow})
             for (auto& filter : *bank) filter.prepare(dsp_core::Butterworth::Type::lowpass, 100.0, 48000.0);
-        double wallEnergy = 0.0, bassEnergy = 0.0;
+        double wallEnergy = 0.0, normalEnergy = 0.0, bassEnergy = 0.0;
         for (std::size_t i = 0; i < wall.left.size(); ++i)
         {
-            double w = 0.5 * (wall.left[i] + wall.right[i]), b = bass.left[i];
+            double w = 0.5 * (wall.left[i] + wall.right[i]), n = 0.5 * (wide.left[i] + wide.right[i]), b = bass.left[i];
             for (auto& filter : wallLow) w = filter.next(w);
+            for (auto& filter : normalLow) n = filter.next(n);
             for (auto& filter : bassLow) b = filter.next(b);
-            if (i > 9600) { wallEnergy += w * w; bassEnergy += b * b; }
+            if (i > 9600) { wallEnergy += w * w; normalEnergy += n * n; bassEnergy += b * b; }
         }
-        const auto separationDb = 10.0 * std::log10(wallEnergy / bassEnergy);
+        const auto unisonDb = 10.0 * std::log10(wallEnergy / bassEnergy);
+        const auto openedDb = 10.0 * std::log10(wallEnergy / normalEnergy);
         std::cout << "mode=" << static_cast<char>('A' + mode) << " mono_vs_stereo_lu=" << monoLu << " drop_vs_normal_lu=" << dropLu
-                  << " drop_separation_db=" << separationDb << '\n';
+                  << " drop_low_vs_anvil_db=" << unisonDb << " drop_low_vs_normal_wall_db=" << openedDb << '\n';
         require(std::abs(monoLu) <= 1.0, "Mono keeps the wall's loudness within 1 LU");
         require(std::abs(dropLu) <= 1.5, "Drop keeps the wall's loudness within 1.5 LU");
-        require(separationDb <= -20.0, "with Drop, Furnace below 100 Hz stays 20 dB under Anvil");
+        require(openedDb >= 15.0 && unisonDb >= -12.0, "with Drop, the wall's roots sound in unison with Anvil below 100 Hz");
     }
     // Switching both while a chord is held: click-free and block-invariant.
     float natural = 0.0f;

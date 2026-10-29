@@ -20,7 +20,8 @@ class AnvilGrowl
 public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
 
-    // Destruction (SPEC section 12): twice the folds and a hard clip, the
+    // Destruction (SPEC section 12): three times the folds and a steep clip
+    // (its source band-limited to 2 kHz so the folds stay alias-free), the
     // vowel opened from "ah" toward "ae", the top lowered to 3 kHz against
     // fizz. Takes effect at prepare().
     void setDestroyed(bool on) noexcept { destroyed = on; }
@@ -30,7 +31,7 @@ public:
         setSplit(splitHz, rate);
         // Band-limit the source before the folder: folding a full-range saw
         // would spray partials far past what 4x oversampling can contain.
-        for (auto& filter : sourceLowpass) filter.set(dsp_core::Svf::Type::lowpass, 3000.0, rate);
+        for (auto& filter : sourceLowpass) filter.set(dsp_core::Svf::Type::lowpass, destroyed ? 2000.0 : 3000.0, rate);
         notch.set(dsp_core::Svf::Type::notch, 110.0, rate, 0.7);
         // An open "ah": first formant 700 Hz, second 1150 Hz. Roar (M2)
         // sweeps them together; until then they sit at this vowel.
@@ -80,10 +81,11 @@ public:
     // Amount (Anvil's grit drive, 0..1) sets how many times the wave folds.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = (1.5f + 4.5f * amount) * (destroyed ? 2.0f : 1.0f);
+        const auto gain = (1.5f + 4.5f * amount) * (destroyed ? 3.0f : 1.0f);
         if (!destroyed) return oversampler.next(input, [gain](float value) noexcept { return shape(gain * value); });
-        // The hard clip flattens the folded peaks into a buzzing edge.
-        return oversampler.next(input, [gain](float value) noexcept { return std::clamp(1.4f * shape(gain * value), -1.0f, 1.0f); });
+        // A steep clip flattens the folded peaks into a buzzing edge; tanh, not
+        // a hard clamp, whose endless corner harmonics would alias.
+        return oversampler.next(input, [gain](float value) noexcept { return std::tanh(2.5f * shape(gain * value)); });
     }
     float cleanup(float input) noexcept
     {

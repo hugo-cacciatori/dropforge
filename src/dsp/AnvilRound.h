@@ -58,7 +58,7 @@ public:
     // Amount (Anvil's drive, 0..1) sets how hard the saturation leans.
     float drive(float input, float amount) noexcept
     {
-        const auto gain = (1.5f + 2.5f * amount) * (destroyed ? 3.5f : 1.0f);
+        const auto gain = (1.5f + 2.5f * amount) * (destroyed ? 7.0f : 1.0f);
         return oversampler.next(input, [gain](float value) noexcept { return shape(gain * value); });
     }
     float cleanup(float input) noexcept

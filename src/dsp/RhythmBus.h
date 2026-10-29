@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <dsp_core/FixedDelay.h>
 #include <dsp_core/LinearRamp.h>
 #include <dsp_core/Oversampler4x.h>
 #include <dsp_core/Svf.h>
+#include <dsp_core/WavetableBank.h>
 #include "OutputLevel.h"
 
 namespace dropforge
@@ -37,6 +39,12 @@ public:
     // The candidate's voicing (FurnaceDesign); takes effect at prepare().
     // Destruction hooks (SPEC section 12): a wavefolder after the drive curve
     // (0 = none) and the top hash low-pass. Take effect at prepare().
+    // Drop moves the whole wall an octave down, so Tight's high-pass moves
+    // with it (scale 0.5); 1 otherwise. Takes effect at the next update.
+    // Drop's unison weight: a low bell at 70 Hz after the dynamics, so the
+    // dropped roots stand up next to Anvil (0 dB = off). Takes effect at prepare().
+    void setLowBoost(double db) noexcept { lowBoostDb = std::isfinite(db) ? std::clamp(db, 0.0, 12.0) : 0.0; }
+    void setTightScale(double scale) noexcept { tightScale = std::isfinite(scale) ? std::clamp(scale, 0.25, 1.0) : 1.0; currentTight = -1.0; }
     void setExtremes(float fold, double hashHz) noexcept
     {
         foldAmount = std::isfinite(fold) ? std::clamp(fold, 0.0f, 1.0f) : 0.0f;
@@ -56,6 +64,7 @@ public:
         oversampler.prepare();
         contour.set(dsp_core::Svf::Type::bell, contourHz, rate, contourQ, contourDb);
         lowMid.set(dsp_core::Svf::Type::bell, lowMidHz, rate, lowMidQ, lowMidDb);
+        lowBoost.set(dsp_core::Svf::Type::bell, 70.0, rate, 0.7, lowBoostDb);
         air.set(dsp_core::Svf::Type::highShelf, airHz, rate, 0.7071067811865476, airDb);
         hashLowpass.set(dsp_core::Svf::Type::lowpass, std::min(hashCutoff, 0.45 * rate), rate);
         currentTight = currentSeparation = -1.0; // recompute for the new rate
@@ -64,7 +73,7 @@ public:
     void reset() noexcept
     {
         oversampler.reset();
-        for (auto* filter : {&tightFilter, &contour, &lowMid, &air, &hashLowpass}) filter->reset();
+        for (auto* filter : {&tightFilter, &contour, &lowMid, &lowBoost, &air, &hashLowpass}) filter->reset();
         for (auto& filter : separation) filter.reset();
         lastGain = 0.0f;
         tight.reset(tightTarget); driveAmount.reset(driveTarget);
@@ -111,6 +120,7 @@ public:
     float tone(float sample) noexcept
     {
         for (auto& filter : separation) sample = filter.next(sample);
+        if (lowBoostDb > 0.0) sample = lowBoost.next(sample);
         return hashLowpass.next(air.next(lowMid.next(sample)));
     }
     // One side without the dynamics, for tests of the chain itself.
@@ -142,8 +152,12 @@ public:
     // loud peaks fold back down into dense, gnarly upper harmonics.
     static float wavefold(float value, float fold) noexcept
     {
-        constexpr float folds = 6.0f;
-        return value + fold * (std::sin(folds * value) / folds - value);
+        // The shared sine table instead of std::sin: this runs four times per
+        // sample per side, and the table read costs a fraction as much.
+        constexpr float folds = 6.0f, cycle = 683565275.57643158f; // 2^32 / (2 pi)
+        if (!(std::abs(value) < 64.0f)) value = 0.0f;
+        const auto phase = static_cast<std::uint32_t>(static_cast<std::int64_t>(folds * value * cycle));
+        return value + fold * (dsp_core::sine(phase) / folds - value);
     }
 
 private:
@@ -157,7 +171,7 @@ private:
     void updateFilters() noexcept
     {
         countdown = controlInterval - 1;
-        const auto tightHz = cutoff(tight.value());
+        const auto tightHz = cutoff(tight.value()) * tightScale;
         if (tightHz != currentTight)
         {
             currentTight = tightHz;
@@ -178,8 +192,8 @@ private:
 
     dsp_core::Oversampler4xFloat oversampler;
     static constexpr std::array<double, 4> separationQ{0.5097955, 0.6013449, 0.8999762, 2.5629154};
-    dsp_core::Svf tightFilter, contour, lowMid, air, hashLowpass;
-    double lowMidDb = defaultLowMidDb, hashCutoff = hashLowpassHz;
+    dsp_core::Svf tightFilter, contour, lowMid, lowBoost, air, hashLowpass;
+    double lowMidDb = defaultLowMidDb, hashCutoff = hashLowpassHz, tightScale = 1.0, lowBoostDb = 0.0;
     float foldAmount = 0.0f;
     std::array<dsp_core::Svf, 4> separation{};
     dsp_core::LinearRamp tight, driveAmount, separationLog;

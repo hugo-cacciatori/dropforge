@@ -99,11 +99,11 @@ struct FurnaceDesign
                 // B: a wavefolder after a harder drive; less air and a 14 kHz
                 // top so the folded harmonics never turn to fizz.
                 auto design = candidateB();
-                design.drivePushDb = 7.0f;
-                design.foldAmount = 0.6f;
-                design.airDb = 2.0;
-                design.hashHz = 14000.0;
-                design.levelGain = 1.1220184543019633f; // +1.0 dB: the squeeze costs loudness
+                design.drivePushDb = 12.0f;
+                design.foldAmount = 0.95f;
+                design.airDb = 1.0;
+                design.hashHz = 12000.0;
+                design.levelGain = 1.4621771744567181f; // +3.3 dB: the squeeze costs loudness
                 return design;
             }
             case 2:
@@ -111,11 +111,12 @@ struct FurnaceDesign
                 // C: the supersaw overdriven into heavy compression; the
                 // octave stack turned down so the top never shrieks.
                 auto design = candidateC();
-                design.drivePushDb = 5.0f;
-                design.voice.octaveDb = -9.0;
-                design.dynamics.band[1] = {-18.0f, 5.0f, -24.0f, 3.0f, 14.0f, 2.0f};
-                design.dynamics.band[2] = {-8.0f, 4.0f, -14.0f, 3.0f, 12.0f, 0.0f};
-                design.levelGain = 1.7579236139586931f; // +4.9 dB: the squeeze costs loudness
+                design.drivePushDb = 12.0f;
+                design.foldAmount = 0.2f;
+                design.voice.octaveDb = -12.0;
+                design.dynamics.band[1] = {-22.0f, 6.0f, -26.0f, 3.0f, 16.0f, 2.0f};
+                design.dynamics.band[2] = {-10.0f, 5.0f, -16.0f, 3.0f, 12.0f, 0.0f};
+                design.levelGain = 2.7797132677592880f; // +8.9 dB: the squeeze costs loudness
                 return design;
             }
             case 3:
@@ -124,10 +125,11 @@ struct FurnaceDesign
                 // down per note against aliasing, so high notes fade back
                 // toward the cleaner tone and triads stay readable.
                 auto design = candidateD();
-                design.voice.fmIndex1 = 3.2;
-                design.voice.fmIndex2 = 1.3;
-                design.drivePushDb = 4.0f;
-                design.levelGain = 1.2161860006463681f; // +1.7 dB: the squeeze costs loudness
+                design.voice.fmIndex1 = 5.0;
+                design.voice.fmIndex2 = 2.2;
+                design.drivePushDb = 10.0f;
+                design.foldAmount = 0.3f;
+                design.levelGain = 1.5135612484362082f; // +3.6 dB: the squeeze costs loudness
                 return design;
             }
             default:
@@ -135,13 +137,14 @@ struct FurnaceDesign
                 // A: 8 dB more drive into a deeper squeeze, more square body;
                 // a deeper low-mid dip so dense chords do not turn to mud.
                 auto design = candidateA();
-                design.drivePushDb = 8.0f;
+                design.drivePushDb = 14.0f;
+                design.foldAmount = 0.25f;
                 design.voice.bodyDb = -10.0;
                 // The louder centred body narrows the image; widen to match A.
                 design.sideGain = 0.9;
-                design.dynamics.band[1] = {-18.0f, 5.0f, -22.0f, 3.0f, 12.0f, 2.0f};
-                design.lowMidDb = -4.5;
-                design.levelGain = 1.4962356560944334f; // +3.5 dB: the squeeze costs loudness
+                design.dynamics.band[1] = {-22.0f, 6.0f, -24.0f, 3.0f, 14.0f, 2.0f};
+                design.lowMidDb = -5.0;
+                design.levelGain = 1.9952623149688795f; // +6.0 dB: the squeeze costs loudness
                 return design;
             }
         }

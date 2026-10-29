@@ -47,7 +47,9 @@ public:
     static constexpr float roundGain = static_cast<float>(0.06 * outputTrim);
     static constexpr float reeseGain = static_cast<float>(0.04 * outputTrim);
     // Destruction trims per mode A-D, so destroyed lands near its clean mode.
-    static constexpr std::array<float, 4> destroyedGain{1.0f, 1.0f, 1.0f, 1.0f};
+    // A: the subtle grit lifted 15.6 dB so Destruction is clearly heard; B
+    // trimmed 1.4 dB so its folded clip is not louder than the clean growl.
+    static constexpr std::array<float, 4> destroyedGain{6.0f, 0.85f, 1.0f, 1.0f};
     // A true dry/wet mix: changing wet share must not add an overall gain boost.
     static constexpr float unisonMix = 0.45f, dryMix = 1.0f - unisonMix;
     static_assert(dryMix + unisonMix == 1.0f, "Dry/wet mix must total 100 percent");

@@ -329,17 +329,16 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         }
         if (furnaceFade == 0) finishFurnaceFade();
     }
-    // Mono: fold the side into the centre, holding the level. Skipped while
-    // fully off so the stereo wall stays bit-identical.
+    // Mono: the right output crossfades to the left, a complete finished
+    // wall on its own. Summing the two sides instead would phase: their
+    // stacks are detuned differently on purpose. One side carries the same
+    // power as the stereo pair, so no make-up is needed. Skipped while fully
+    // off so the stereo wall stays bit-identical.
     if (monoOn || monoBlend.value() > 0.0)
         for (std::size_t i = 0; i < samples; ++i)
         {
             const auto blend = monoBlend.next();
-            if (i >= rhythmCount) continue;
-            const auto mid = 0.5 * (rhythmLeft[i] + rhythmRight[i]), side = 0.5 * (rhythmLeft[i] - rhythmRight[i]);
-            const auto centre = mid * (1.0 + blend * (monoMakeup - 1.0));
-            rhythmLeft[i] = centre + (1.0 - blend) * side;
-            rhythmRight[i] = centre - (1.0 - blend) * side;
+            if (i < rhythmCount) rhythmRight[i] += blend * (rhythmLeft[i] - rhythmRight[i]);
         }
     if (!rhythmSuspended && !rhythmEnabled && rhythmCount > 0 && rhythmGain[rhythmCount - 1] == 0.0)
     {
