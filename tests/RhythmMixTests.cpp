@@ -7,6 +7,8 @@ namespace
 {
 struct Event { int sample, kind, channel, note, value; };
 struct Audio { std::vector<float> left, right, bass; };
+// The Furnace candidate under test (SPEC section 4: A, B or C).
+char candidate = 'a';
 double reconstructionError = 0.0;
 int isolatedFixtures = 0;
 Audio render(std::vector<Event> events, int frames, int rate, float split, float drive, float tight,
@@ -14,12 +16,14 @@ Audio render(std::vector<Event> events, int frames, int rate, float split, float
 {
     std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) { return a.sample < b.sample; });
     dropforge::Engine engine;
+    engine.setFurnaceDesign(dropforge::FurnaceDesign::candidate(candidate));
     engine.setLayersEnabled(true, true);
     engine.setBassParameters(split, drive); engine.setRhythmParameters(drive, tight); engine.prepare(rate);
     std::array<dropforge::Engine, 3> isolated;
     if (verifyMasks)
         for (auto& copy : isolated)
         {
+            copy.setFurnaceDesign(dropforge::FurnaceDesign::candidate(candidate));
             copy.setLayersEnabled(true, true);
             copy.setBassParameters(split, drive); copy.setRhythmParameters(drive, tight); copy.prepare(rate);
         }
@@ -93,7 +97,7 @@ void check(const juce::String& id, const Audio& audio, int rate, float split, fl
     const bool foldPass = m.foldLossDb <= 3.0;
     const bool pass = widthPass && foldPass && lowPass && m.stereoPower > 1.0e-12;
     auto row = std::make_unique<juce::DynamicObject>();
-    row->setProperty("id", id); row->setProperty("sample_rate", rate); row->setProperty("split", split);
+    row->setProperty("id", id); row->setProperty("furnace", juce::String::charToString(candidate)); row->setProperty("sample_rate", rate); row->setProperty("split", split);
     row->setProperty("drive", drive); row->setProperty("tight", tight);
     row->setProperty("correlation", m.correlation); row->setProperty("fold_loss_db", m.foldLossDb);
     row->setProperty("low_rhythm_dbfs", m.lowRhythmDbfs); row->setProperty("low_bass_dbfs", m.lowBassDbfs);
@@ -102,7 +106,7 @@ void check(const juce::String& id, const Audio& audio, int rate, float split, fl
     row->setProperty("window", id.startsWith("hold-") ? "settled_hann_10s" : "complete_fixture");
     row->setProperty("fold_band_dbfs", m.foldBandDbfs); row->setProperty("fold_passed", foldPass);
     rows.add(juce::var(row.release()));
-    std::cout << id << " rate=" << rate << " split=" << split << " drive=" << drive << " tight=" << tight
+    std::cout << id << " furnace=" << candidate << " rate=" << rate << " split=" << split << " drive=" << drive << " tight=" << tight
               << " correlation=" << m.correlation << " fold_loss_db=" << m.foldLossDb
               << " low_ratio_db=" << m.separationDb << " low_bass_dbfs=" << m.lowBassDbfs
               << " fold_band_dbfs=" << m.foldBandDbfs
@@ -180,6 +184,14 @@ int main(int argc, char** argv)
         fixtures(juce::File(argv[1]), rate, 140, 0.5f, 0.5f, rate == 48000);
         holds(rate == 192000 ? edgeHolds : allHolds, rate, 140, 0.5f, 0.5f);
     }
+    // Every round-1 candidate passes the same gates at the default rate.
+    for (const char other : {'b', 'c'})
+    {
+        candidate = other;
+        fixtures(juce::File(argv[1]), 48000, 140, 0.5f, 0.5f, false);
+        holds(edgeHolds, 48000, 140, 0.5f, 0.5f);
+    }
+    candidate = 'a';
     // Corners of what can actually change: Anvil's split voicing and the
     // Tight range. Furnace's drive is fixed in the product (SPEC section 2).
     for (float split : {80.0f, 250.0f})

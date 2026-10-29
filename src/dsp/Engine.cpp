@@ -22,10 +22,15 @@ void Engine::reset() noexcept
     for (auto& wheel : bend)
         wheel.reset(1.0);
     bassVoice.prepare(rate);
-    for (auto& bus : rhythmBus) { bus.setAnvilPresent(bassEnabled); bus.prepare(rate); }
+    for (auto& bus : rhythmBus)
+    {
+        bus.setVoicing(furnace.drivePushDb, furnace.contourDb, furnace.airDb);
+        bus.setAnvilPresent(bassEnabled);
+        bus.prepare(rate);
+    }
     // Mono low end: the side signal loses everything below about 150 Hz.
     sideHighpass.set(dsp_core::Svf::Type::highpass, monoBelowHz, rate);
-    furnaceDynamics.prepare(furnaceDynamicsSettings(), rate);
+    furnaceDynamics.prepare(furnace.dynamics, rate);
     furnaceDynamics.setDepth(furnaceDynamicsDepth);
     clearRhythm();
     bassChannel = 1;
@@ -115,6 +120,7 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
     auto& voice = voices[NoteRouter::pickVoice(voices, channel, note)];
     voice.transitionStart = voice.lastOutput;
     voice.transitionRemaining = transitionSamples;
+    voice.oscillators.setDesign(furnace.voice);
     voice.oscillators.reset(channel, note);
     voice.envelope.start();
     voice.frequency = NoteRouter::frequency(note);

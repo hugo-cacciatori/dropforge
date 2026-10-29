@@ -26,6 +26,8 @@ public:
         output.reset(outputDb);
     }
     void setOutputDb(float db) noexcept { output.setTarget(db); }
+    // Furnace candidate for renders and listening rounds; set before prepare().
+    void setFurnaceDesign(const FurnaceDesign& design) noexcept { engine.setFurnaceDesign(design); }
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }

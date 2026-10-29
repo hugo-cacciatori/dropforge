@@ -22,6 +22,7 @@ struct Options
     std::string maskName = "both";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
     std::string componentName = "all";
+    std::string furnace = "a";
 };
 
 double number(const char* text)
@@ -91,6 +92,12 @@ Options parse(int argc, char** argv)
             else if (options.componentName == "dry-grit") options.bassComponent = dropforge::BassComponent::dryGrit;
             else if (options.componentName == "unison-grit") options.bassComponent = dropforge::BassComponent::unisonGrit;
             else throw std::runtime_error("Bass component must be all, clean, grit, dry-grit or unison-grit");
+        }
+        else if (flag == "--furnace")
+        {
+            options.furnace = argv[i + 1];
+            if (options.furnace != "a" && options.furnace != "b" && options.furnace != "c")
+                throw std::runtime_error("Furnace candidate must be a, b or c");
         }
         else if (flag == "--layer-mask")
         {
@@ -172,6 +179,7 @@ void render(const Options& options)
     if (!writer) throw std::runtime_error("Cannot create WAV output");
     dropforge::InstrumentCore core;
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
+    core.setFurnaceDesign(dropforge::FurnaceDesign::candidate(options.furnace.front()));
     core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -217,6 +225,7 @@ void render(const Options& options)
     metrics->setProperty("block_size", options.block);
     metrics->setProperty("output_db", options.outputDb);
     metrics->setProperty("layer_mask", juce::String(options.maskName));
+    metrics->setProperty("furnace", juce::String(options.furnace));
     metrics->setProperty("bass_component", juce::String(options.componentName));
     metrics->setProperty("split_hz", options.splitHz);
     metrics->setProperty("destruction", options.destruction);
@@ -250,6 +259,7 @@ int main(int argc, char** argv)
                      "  [--layer-mask both|bass|rhythm|none] (diagnostic output mask, not a playing mode)\n"
                      "  [--bass-component all|clean|grit|dry-grit|unison-grit] (diagnostic isolation, same final filter/envelope)\n"
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
+                     "  [--furnace a|b|c] (Furnace candidate for listening rounds; default a)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

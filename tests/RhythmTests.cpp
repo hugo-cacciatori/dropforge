@@ -262,8 +262,39 @@ void dynamicsProbe()
         require(sum[0] > -3.0 && sum[0] < 6.0, "dynamics never boom the low band up");
     }
 }
+void candidates()
+{
+    // Round 1 compares three clearly different Furnace designs. Each must
+    // really differ, and B (the dubstep side) must be brighter than C (the
+    // smoother future-bass side). Brightness: the share of the signal's
+    // first difference, which weights each frequency by its height.
+    std::array<double, 3> brightness{};
+    std::array<std::vector<float>, 3> left;
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        dropforge::Engine engine;
+        engine.setFurnaceDesign(dropforge::FurnaceDesign::candidate(static_cast<char>('a' + i)));
+        engine.prepare(48000);
+        for (const auto note : {40, 47, 52, 56}) engine.noteOn(1, note, 127);
+        render(engine, 9600);
+        const auto audio = render(engine, 48000);
+        double power = 0.0, slope = 0.0;
+        for (std::size_t n = 1; n < audio.left.size(); ++n)
+        {
+            power += static_cast<double>(audio.left[n]) * audio.left[n];
+            const auto step = static_cast<double>(audio.left[n]) - audio.left[n - 1];
+            slope += step * step;
+            require(std::isfinite(audio.left[n]) && std::abs(audio.left[n]) < 1.0f, "every candidate is finite and bounded");
+        }
+        brightness[i] = 10.0 * std::log10(slope / power);
+        left[i] = audio.left;
+    }
+    std::cout << "candidate_brightness_db a=" << brightness[0] << " b=" << brightness[1] << " c=" << brightness[2] << '\n';
+    require(left[0] != left[1] && left[0] != left[2] && left[1] != left[2], "the three candidates sound different");
+    require(brightness[1] > brightness[2] + 1.0, "B is clearly brighter than C");
+}
 int main()
 {
-    targets(); spectrum(); bentAudio(); repeatability(); octavePresence(); dynamicsProbe();
+    targets(); spectrum(); bentAudio(); repeatability(); octavePresence(); dynamicsProbe(); candidates();
     std::cout << "rhythm_notes=8 pitches=0..127 allocation=deterministic stereo_repeat=exact\n";
 }

@@ -27,13 +27,20 @@ public:
     static constexpr int latencySamples = dsp_core::Oversampler4xFloat::latencySamples;
     // With Anvil on, Furnace stays out of its range; alone it keeps its body.
     static constexpr double separationHz = 120.0, aloneHz = 40.0, separationGlideSeconds = 0.05;
-    static constexpr double contourHz = 2800.0, contourDb = 3.0, contourQ = 0.7;
+    static constexpr double contourHz = 2800.0, contourQ = 0.7;
     static constexpr double lowMidHz = 300.0, lowMidDb = -2.0, lowMidQ = 0.8;
-    static constexpr double airHz = 10000.0, airDb = 3.0;
+    static constexpr double airHz = 10000.0;
     static constexpr double hashLowpassHz = 18000.0;
     static constexpr float outputGain = static_cast<float>(0.93 * outputTrim);
     static constexpr int controlInterval = 32;
 
+    // The candidate's voicing (FurnaceDesign); takes effect at prepare().
+    void setVoicing(float drivePushDb, double contour, double airShelf) noexcept
+    {
+        drivePush = std::pow(10.0f, (std::isfinite(drivePushDb) ? drivePushDb : 0.0f) / 20.0f);
+        contourDb = std::isfinite(contour) ? contour : 3.0;
+        airDb = std::isfinite(airShelf) ? airShelf : 3.0;
+    }
     void prepare(double sampleRate) noexcept
     {
         rate = sampleRate;
@@ -86,7 +93,7 @@ public:
         lastGain = outputGain * gate * velocity;
         const auto amount = static_cast<float>(driveAmount.next());
         const auto sample = contour.next(tightFilter.next(input));
-        return oversampler.next(sample, [amount](float value) noexcept { return shape(value, amount); });
+        return oversampler.next(sample, [amount, push = drivePush](float value) noexcept { return shape(value, amount, push); });
     }
     float tone(float sample) noexcept
     {
@@ -105,9 +112,11 @@ public:
     // so it adds density and harmonics without changing the level of quiet
     // material. Amount 0 is exactly linear (for superposition tests); from
     // 0.25 the full curve applies, its gain rising with amount.
-    static float shape(float value, float amount) noexcept
+    // push drives the curve harder (a candidate's drivePushDb) at the same
+    // small-signal gain.
+    static float shape(float value, float amount, float push = 1.0f) noexcept
     {
-        const auto gain = 1.0f + 7.0f * amount;
+        const auto gain = (1.0f + 7.0f * amount) * push;
         constexpr float bias = 0.2f;
         const auto offset = std::tanh(bias);
         const auto slope = 1.0f - offset * offset; // tanh'(bias)
@@ -154,7 +163,8 @@ private:
     dsp_core::FixedDelay<float, latencySamples> alignedGate, alignedLevel;
     double rate = 44100.0, tightTarget = 0.5, driveTarget = 0.5;
     double currentTight = -1.0, currentSeparation = -1.0;
-    float lastGain = 0.0f;
+    double contourDb = 3.0, airDb = 3.0;
+    float drivePush = 1.0f, lastGain = 0.0f;
     bool anvilPresent = true;
     int smoothingSamples = 441, countdown = 0;
 };

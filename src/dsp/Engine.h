@@ -7,6 +7,7 @@
 #include <dsp_core/MultibandDynamics.h>
 #include <dsp_core/Svf.h>
 #include "BassVoice.h"
+#include "FurnaceDesign.h"
 #include "NoteRouter.h"
 #include "RhythmOscillators.h"
 #include "RhythmBus.h"
@@ -50,6 +51,9 @@ public:
         furnaceDynamicsDepth = destruction > 0.0f ? 1.0f : 0.0f;
         furnaceDynamics.setDepth(furnaceDynamicsDepth);
     }
+    // Which Furnace candidate plays (SPEC section 4). Not real-time: set it
+    // before prepare() or reset(), where it takes effect.
+    void setFurnaceDesign(const FurnaceDesign& design) noexcept { furnace = design; }
     void noteOn(int channel, int note, int velocity) noexcept;
     void noteOff(int channel, int note) noexcept;
     void allNotesOff(int channel) noexcept;
@@ -95,22 +99,7 @@ private:
     dsp_core::Svf sideHighpass;
     dsp_core::MultibandDynamics furnaceDynamics;
     float furnaceDynamicsDepth = 1.0f;
-    // Furnace A's starting dynamics (SPEC section 4), set from the measured
-    // post-drive band peaks of typical voicings (about -14 dB low, -9 dB mid,
-    // -13 dB high on an E power chord); tuned by listening.
-    //   low:  held steady on chords, a gentle lift (at most 6 dB) for high notes,
-    //         so it never booms under Anvil;
-    //   mid:  about 3 dB of compression with 2 dB make-up: the dense core;
-    //   high: lifted about 3 dB toward the top (at most 9 dB): the shimmer.
-    static dsp_core::MultibandDynamics::Settings furnaceDynamicsSettings() noexcept
-    {
-        dsp_core::MultibandDynamics::Settings settings;
-        //            down dB, ratio, up dB, ratio, max lift, output dB
-        settings.band = {{{-12.0f, 4.0f, -22.0f, 2.0f, 6.0f, 0.0f},
-                          {-14.0f, 3.0f, -20.0f, 3.0f, 12.0f, 2.0f},
-                          {-4.0f, 4.0f, -8.0f, 3.0f, 9.0f, 0.0f}}};
-        return settings;
-    }
+    FurnaceDesign furnace = FurnaceDesign::candidateA();
     dsp_core::LinearRamp bassFade, rhythmFade, bassBendOffset;
     dsp_core::LinearRamp bassMixLevel, rhythmMixLevel;
     double bassMixTarget = 1.0, rhythmMixTarget = 1.0;
