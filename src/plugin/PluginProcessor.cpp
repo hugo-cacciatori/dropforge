@@ -45,6 +45,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
             juce::ParameterID{layer.first, 1}, layer.second,
             juce::NormalisableRange<float>{-60.0f, 6.0f}, 0.0f,
             juce::AudioParameterFloatAttributes{}.withLabel("dB")));
+    const juce::StringArray modes{"A Forge", "B Riot", "C Halo", "D Alloy"};
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::bassMode, 1}, "Anvil Mode", modes, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::rhythmMode, 1}, "Furnace Mode", modes, 0));
     return layout;
 }
 
@@ -57,6 +62,8 @@ DropforgeProcessor::DropforgeProcessor()
     rhythmLevel = state.getRawParameterValue(dropforge::parameters::rhythmLevel);
     bassEnabled = state.getRawParameterValue(dropforge::parameters::bassEnabled);
     rhythmEnabled = state.getRawParameterValue(dropforge::parameters::rhythmEnabled);
+    bassMode = state.getRawParameterValue(dropforge::parameters::bassMode);
+    rhythmMode = state.getRawParameterValue(dropforge::parameters::rhythmMode);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -66,6 +73,7 @@ void DropforgeProcessor::prepareToPlay(double sampleRate, int)
     preparedRate = std::isfinite(sampleRate) && sampleRate >= 44100.0 && sampleRate <= 192000.0 ? sampleRate : 44100.0;
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
+    applyModes();
     core.prepare(preparedRate, readOutputDb());
     reset();
     setLatencySamples(dropforge::InstrumentCore::latencySamples);
@@ -83,6 +91,7 @@ void DropforgeProcessor::reset()
 {
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
+    applyModes();
     core.reset(readOutputDb());
     panicRequested.store(false, std::memory_order_relaxed);
 }
@@ -107,9 +116,21 @@ void DropforgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     core.setOutputDb(readOutputDb());
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
+    applyModes();
     dropforge::processMidiBlock(core, buffer, midi);
     midi.clear();
     publishMeters();
+}
+
+void DropforgeProcessor::applyModes() noexcept
+{
+    // Choice parameters hold their index as a float; anything unreadable is A.
+    const auto index = [](const std::atomic<float>* parameter) noexcept
+    {
+        const auto value = parameter->load(std::memory_order_relaxed);
+        return std::isfinite(value) ? std::clamp(static_cast<int>(std::lround(value)), 0, 3) : 0;
+    };
+    core.setModes(index(bassMode), index(rhythmMode));
 }
 
 void DropforgeProcessor::publishMeters() noexcept

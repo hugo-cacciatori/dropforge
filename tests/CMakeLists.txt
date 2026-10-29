@@ -6,6 +6,10 @@ add_executable(dropforge_note_router_tests NoteRouterTests.cpp)
 target_link_libraries(dropforge_note_router_tests PRIVATE dropforge_core)
 add_test(NAME note_router COMMAND dropforge_note_router_tests)
 
+add_executable(dropforge_mode_tests ModeTests.cpp)
+target_link_libraries(dropforge_mode_tests PRIVATE dropforge_core)
+add_test(NAME mode_switching COMMAND dropforge_mode_tests)
+
 add_executable(dropforge_master_tests MasterTests.cpp)
 target_link_libraries(dropforge_master_tests PRIVATE dropforge_core)
 add_test(NAME master_chain COMMAND dropforge_master_tests)

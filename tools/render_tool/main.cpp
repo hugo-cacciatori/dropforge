@@ -104,13 +104,14 @@ Options parse(int argc, char** argv)
         else if (flag == "--furnace")
         {
             options.furnace = argv[i + 1];
-            if (options.furnace != "a" && options.furnace != "b" && options.furnace != "c")
-                throw std::runtime_error("Furnace candidate must be a, b or c");
+            if (options.furnace.size() != 1 || options.furnace[0] < 'a' || options.furnace[0] > 'd')
+                throw std::runtime_error("Furnace mode must be a, b, c or d");
         }
         else if (flag == "--anvil")
         {
             options.anvil = argv[i + 1];
-            if (options.anvil != "a" && options.anvil != "b") throw std::runtime_error("Anvil grit must be a or b");
+            if (options.anvil.size() != 1 || options.anvil[0] < 'a' || options.anvil[0] > 'd')
+                throw std::runtime_error("Anvil mode must be a, b, c or d");
         }
         else if (flag == "--layer-mask")
         {
@@ -192,8 +193,7 @@ void render(const Options& options)
     if (!writer) throw std::runtime_error("Cannot create WAV output");
     dropforge::InstrumentCore core;
     core.setLayersEnabled(options.bassEnabled, options.rhythmEnabled);
-    core.setFurnaceDesign(dropforge::FurnaceDesign::candidate(options.furnace.front()));
-    core.setAnvilGrit(options.anvil == "b" ? dropforge::AnvilGrit::b : dropforge::AnvilGrit::a);
+    core.setModes(options.anvil[0] - 'a', options.furnace[0] - 'a');
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.destruction);
     juce::AudioBuffer<float> audio(2, options.block);
@@ -283,8 +283,8 @@ int main(int argc, char** argv)
                      "  [--layer-mask both|bass|rhythm|none] (diagnostic output mask, not a playing mode)\n"
                      "  [--bass-component all|clean|grit|dry-grit|unison-grit] (diagnostic isolation, same final filter/envelope)\n"
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
-                     "  [--furnace a|b|c] (Furnace candidate for listening rounds; default a)\n"
-                     "  [--anvil a|b] (Anvil grit candidate: a harmonic grit, b growl; default a)\n"
+                     "  [--furnace a|b|c|d] (Furnace mode; default a)\n"
+                     "  [--anvil a|b|c|d] (Anvil mode; default a)\n"
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;

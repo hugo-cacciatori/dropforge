@@ -40,10 +40,13 @@ public:
         meters = {};
     }
     void setOutputDb(float db) noexcept { output.setTarget(db); }
-    // Furnace candidate for renders and listening rounds; set before prepare().
-    void setFurnaceDesign(const FurnaceDesign& design) noexcept { engine.setFurnaceDesign(design); }
-    // Anvil grit candidate for renders and listening rounds; set before prepare().
-    void setAnvilGrit(AnvilGrit grit) noexcept { engine.setAnvilGrit(grit); }
+    // Modes 0-3 = A-D for Anvil and Furnace (SPEC section 12); real-time
+    // safe, crossfading while notes sound.
+    void setModes(int anvil, int furnace) noexcept
+    {
+        engine.setAnvilMode(anvil);
+        engine.setFurnaceMode(furnace);
+    }
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }

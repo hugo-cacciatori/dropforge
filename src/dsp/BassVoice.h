@@ -37,9 +37,9 @@ public:
     // grit independent: raising the sine must never drive it into saturation.
     static constexpr float sineGain = static_cast<float>(0.08 * 1.4125375446227544 * outputTrim);
     static constexpr float richGain = static_cast<float>(0.10 * outputTrim);
-    // Growl B sits about 10 dB under the sine's RMS on a held E1: clearly
-    // audible mid-bass over the sub. Provisional until the M1.3c balance.
-    static constexpr float growlGain = static_cast<float>(0.06 * outputTrim);
+    // Growl B sits about 13 dB under the sine's RMS on a held E1: clearly
+    // audible mid-bass over the sub, within 1 LU of grit A (SPEC section 12).
+    static constexpr float growlGain = static_cast<float>(0.042 * outputTrim);
     // A true dry/wet mix: changing wet share must not add an overall gain boost.
     static constexpr float unisonMix = 0.45f, dryMix = 1.0f - unisonMix;
     static_assert(dryMix + unisonMix == 1.0f, "Dry/wet mix must total 100 percent");
@@ -98,6 +98,8 @@ public:
         pendingAttack = true;
     }
     void stop() noexcept { envelope.stop(); }
+    // Still producing sound: held, releasing, or draining its aligned delay.
+    bool sounding() const noexcept { return envelope.active() || pendingAttack || lastOutput != 0.0f; }
     void retargetVelocity(int noteVelocity) noexcept
     {
         velocity.setTarget(std::clamp(noteVelocity, 1, 127) / 127.0, transitionSamples);

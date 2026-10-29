@@ -15,6 +15,8 @@ struct FurnaceDesign
     double contourDb = 3.0;     // the accepted 2.8 kHz pre-drive push
     double airDb = 3.0;         // 10 kHz shelf after the dynamics
     dsp_core::MultibandDynamics::Settings dynamics{};
+    // Output trim so every mode lands within 1 LU of A (SPEC section 12).
+    float levelGain = 1.0f;
 
     // A: the balanced wall. Starting dynamics come from the measured post-drive
     // band peaks of typical voicings (about -14 dB low, -9 dB mid, -13 dB
@@ -56,6 +58,8 @@ struct FurnaceDesign
         design.airDb = 4.0;
         design.dynamics.band[1] = {-12.0f, 2.0f, -20.0f, 2.0f, 9.0f, 1.0f};
         design.dynamics.band[2] = {-4.0f, 3.0f, -10.0f, 2.0f, 9.0f, 0.0f};
+        // The louder octave shimmer reads about 1 LU over A; trim -0.8 dB.
+        design.levelGain = 0.91201083935590974f;
         return design;
     }
     // 'a', 'b' or 'c' (either case); anything else is candidate A.

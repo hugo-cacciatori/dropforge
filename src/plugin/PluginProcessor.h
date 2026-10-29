@@ -56,6 +56,9 @@ private:
     std::atomic<float>* rhythmLevel = nullptr;
     std::atomic<float>* bassEnabled = nullptr;
     std::atomic<float>* rhythmEnabled = nullptr;
+    std::atomic<float>* bassMode = nullptr;
+    std::atomic<float>* rhythmMode = nullptr;
+    void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};
     std::atomic<float> meterPeakLeft{0.0f}, meterPeakRight{0.0f}, meterGlueDb{0.0f}, meterLimiterDb{0.0f};

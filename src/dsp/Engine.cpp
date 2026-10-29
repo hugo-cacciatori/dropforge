@@ -5,6 +5,21 @@
 
 namespace dropforge
 {
+namespace
+{
+// Mode letters to designs. Modes not built yet play A (SPEC section 12, M1.7).
+FurnaceDesign furnaceForMode(int mode) noexcept
+{
+    switch (mode)
+    {
+        case 1: return FurnaceDesign::candidateB();
+        case 2: return FurnaceDesign::candidateC();
+        default: return FurnaceDesign::candidateA();
+    }
+}
+AnvilGrit gritForMode(int mode) noexcept { return mode == 1 ? AnvilGrit::b : AnvilGrit::a; }
+}
+
 void Engine::prepare(double sampleRate) noexcept
 {
     rate = std::isfinite(sampleRate) && sampleRate >= 44100.0 && sampleRate <= 192000.0
@@ -13,6 +28,7 @@ void Engine::prepare(double sampleRate) noexcept
     releaseSamples = static_cast<int>(std::ceil(rate * releaseSeconds));
     transitionSamples = static_cast<int>(std::ceil(rate * 0.002));
     fadeSamples = static_cast<int>(std::ceil(rate * 0.005));
+    modeFadeSamples = static_cast<int>(std::ceil(rate * modeFadeSeconds));
     reset();
 }
 
@@ -21,41 +37,110 @@ void Engine::reset() noexcept
     serial = 0;
     for (auto& wheel : bend)
         wheel.reset(1.0);
-    bassVoice.prepare(rate);
-    for (auto& bus : rhythmBus)
+    // A pending mode change is applied now: nothing sounds after a reset.
+    if (furnacePending >= 0) { furnaces[furnaceSlot].setDesign(furnaceForMode(furnacePending)); furnaceModeNow = furnacePending; }
+    if (anvilPending >= 0) { bassVoices[bassSlot].setGrit(gritForMode(anvilPending)); anvilModeNow = anvilPending; }
+    furnacePending = anvilPending = -1;
+    furnaceFade = bassFade = 0;
+    for (auto& voice : bassVoices) voice.prepare(rate);
+    for (auto& furnace : furnaces)
     {
-        bus.setVoicing(furnace.drivePushDb, furnace.contourDb, furnace.airDb);
-        bus.setAnvilPresent(bassEnabled);
-        bus.prepare(rate);
+        furnace.prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
+        furnace.setParameters(rhythmDrive, rhythmTight);
     }
-    // Mono low end: the side signal loses everything below about 150 Hz.
-    sideHighpass.set(dsp_core::Svf::Type::highpass, monoBelowHz, rate);
-    furnaceDynamics.prepare(furnace.dynamics, rate);
-    furnaceDynamics.setDepth(furnaceDynamicsDepth);
-    clearRhythm();
     bassChannel = 1;
     bassBendOffset.reset(0.0);
     router.reset();
     router.setBassRule(rhythmEnabled ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
     bassMixLevel.reset(bassMixTarget);
     rhythmMixLevel.reset(rhythmMixTarget);
-    bassFade.reset(bassEnabled ? 1.0 : 0.0);
-    rhythmFade.reset(rhythmEnabled ? 1.0 : 0.0);
+    bassPower.reset(bassEnabled ? 1.0 : 0.0);
+    rhythmPower.reset(rhythmEnabled ? 1.0 : 0.0);
     bassSuspended = !bassEnabled;
     rhythmSuspended = !rhythmEnabled;
 }
 
 void Engine::clearRhythm() noexcept
 {
-    for (auto& voice : voices)
+    for (auto& furnace : furnaces) furnace.clear();
+    if (furnaceFade > 0) finishFurnaceFade();
+}
+
+void Engine::setFurnaceMode(int mode) noexcept
+{
+    mode = std::clamp(mode, 0, 3);
+    if (furnaceFade > 0) { furnacePending = mode == furnaceModeNow ? -1 : mode; return; }
+    if (mode == furnaceModeNow) return;
+    furnaceModeNow = mode;
+    auto& current = furnaces[furnaceSlot];
+    if (rhythmSuspended || !current.sounding())
     {
-        voice = Voice{};
-        voice.envelope.prepare(attackSamples, releaseSamples);
+        // Silent: switch in place, as if the mode had always been chosen.
+        current.setDesign(furnaceForMode(mode));
+        current.prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
+        current.setParameters(rhythmDrive, rhythmTight);
+        return;
     }
-    for (auto& bus : rhythmBus) bus.reset();
-    furnaceDynamics.reset();
-    sideHighpass.reset();
-    rhythmLevel.reset(1.0); rhythmLevelTarget = 1.0; rhythmWasActive = false;
+    furnaceSlot = 1 - furnaceSlot;
+    auto& incoming = furnaces[furnaceSlot];
+    incoming.setDesign(furnaceForMode(mode));
+    incoming.prepare(rate, attackSamples, releaseSamples, transitionSamples, bassEnabled);
+    incoming.setParameters(rhythmDrive, rhythmTight);
+    startHeldRhythm(incoming);
+    furnaceFade = modeFadeSamples;
+}
+
+void Engine::setAnvilMode(int mode) noexcept
+{
+    mode = std::clamp(mode, 0, 3);
+    if (bassFade > 0) { anvilPending = mode == anvilModeNow ? -1 : mode; return; }
+    if (mode == anvilModeNow) return;
+    anvilModeNow = mode;
+    if (bassSuspended || !bassVoices[bassSlot].sounding())
+    {
+        // Silent: switch in place, as if the mode had always been chosen.
+        bassVoices[bassSlot].setGrit(gritForMode(mode));
+        return;
+    }
+    // Sounding (held, or still in its release tail): crossfade to a fresh
+    // voice; it starts the held key, or stays silent under a release tail.
+    bassSlot = 1 - bassSlot;
+    auto& incoming = bassVoices[bassSlot];
+    incoming.setParameters(splitTarget, driveTarget);
+    incoming.setGrit(gritForMode(mode));
+    if (bassEnabled && router.bassKey().held()) startBass(incoming);
+    bassFade = modeFadeSamples;
+}
+
+void Engine::finishFurnaceFade() noexcept
+{
+    furnaceFade = 0;
+    furnaces[1 - furnaceSlot].clear();
+    if (furnacePending >= 0)
+    {
+        const auto next = furnacePending;
+        furnacePending = -1;
+        setFurnaceMode(next);
+    }
+}
+
+void Engine::finishBassFade() noexcept
+{
+    bassFade = 0;
+    bassVoices[1 - bassSlot].reset();
+    if (anvilPending >= 0)
+    {
+        const auto next = anvilPending;
+        anvilPending = -1;
+        setAnvilMode(next);
+    }
+}
+
+void Engine::fadeWeights(int remaining, int total, float& incoming, float& outgoing) noexcept
+{
+    const auto position = 1.0 - static_cast<double>(remaining) / total;
+    incoming = static_cast<float>(std::sin(1.5707963267948966 * position));
+    outgoing = static_cast<float>(std::cos(1.5707963267948966 * position));
 }
 
 void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
@@ -66,16 +151,10 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
     bassEnabled = bass;
     rhythmEnabled = rhythm;
     const auto change = router.setBassRule(rhythm ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
-    for (auto& bus : rhythmBus)
-    {
-        bus.setAnvilPresent(bass);
-        // A silent, cleared Furnace starts at its new separation cut, as a
-        // freshly played chord would, instead of gliding in from the old one.
-        if (rhythmSuspended) bus.reset();
-    }
+    for (auto& furnace : furnaces) furnace.setAnvilPresent(bass, rhythmSuspended);
     if (bass != bassWasEnabled)
     {
-        bassFade.setTarget(bass ? 1.0 : 0.0, fadeSamples);
+        bassPower.setTarget(bass ? 1.0 : 0.0, fadeSamples);
         if (bass)
         {
             bassSuspended = false;
@@ -85,20 +164,25 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
     else if (bass) updateBass(change);
     if (rhythm != rhythmWasEnabled)
     {
-        rhythmFade.setTarget(rhythm ? 1.0 : 0.0, fadeSamples);
+        rhythmPower.setTarget(rhythm ? 1.0 : 0.0, fadeSamples);
         if (rhythm)
         {
             rhythmSuspended = false;
             // Preserve continuity during a rapid reversal; a fully faded layer
             // already had its history cleared at zero gain.
-            for (auto& voice : voices)
-                if (voice.keyDown) { voice.keyDown = false; voice.envelope.stop(); }
-            router.forEachNewestHeldKey(rhythmVoiceCount, [this](int channel, int note, int velocity) noexcept
-            {
-                startRhythm(channel, note, velocity);
-            });
+            for (auto& furnace : furnaces) furnace.releaseAll();
+            startHeldRhythm(furnaces[furnaceSlot]);
+            if (furnaceFade > 0) startHeldRhythm(furnaces[1 - furnaceSlot]);
         }
     }
+}
+
+void Engine::startHeldRhythm(FurnaceLayer& furnace) noexcept
+{
+    router.forEachNewestHeldKey(rhythmVoiceCount, [this, &furnace](int channel, int note, int velocity) noexcept
+    {
+        furnace.start(channel, note, velocity, bend[static_cast<std::size_t>(channel - 1)].value(), ++serial);
+    });
 }
 
 void Engine::noteOn(int channel, int note, int velocity) noexcept
@@ -117,43 +201,30 @@ void Engine::noteOn(int channel, int note, int velocity) noexcept
 
 void Engine::startRhythm(int channel, int note, int velocity) noexcept
 {
-    auto& voice = voices[NoteRouter::pickVoice(voices, channel, note)];
-    voice.transitionStart = voice.lastOutput;
-    voice.transitionRemaining = transitionSamples;
-    voice.oscillators.setDesign(furnace.voice);
-    voice.oscillators.reset(channel, note);
-    voice.envelope.start();
-    voice.frequency = NoteRouter::frequency(note);
-    // Pitch now; the voice's control updates then keep it following the bend.
-    voice.oscillators.setPitch(voice.frequency * bend[static_cast<std::size_t>(channel - 1)].value(), rate);
-    voice.controlCountdown = controlBlock;
-    voice.velocity = std::min(velocity, 127) / 127.0;
-    voice.channel = channel;
-    voice.note = note;
-    voice.keyDown = true;
-    voice.age = ++serial;
+    const auto ratio = bend[static_cast<std::size_t>(channel - 1)].value();
+    const auto age = ++serial;
+    furnaces[furnaceSlot].start(channel, note, velocity, ratio, age);
+    // The outgoing mode plays along until its fade ends, so the crossfade
+    // carries the same notes on both sides.
+    if (furnaceFade > 0) furnaces[1 - furnaceSlot].start(channel, note, velocity, ratio, age);
 }
 
 void Engine::noteOff(int channel, int note) noexcept
 {
     updateBass(router.noteOff(channel, note).bass);
-    for (auto& voice : voices)
-        if (voice.keyDown && voice.channel == channel && voice.note == note)
-        {
-            voice.keyDown = false;
-            voice.envelope.stop();
-        }
+    for (auto& furnace : furnaces) furnace.release(channel, note);
 }
 
 void Engine::allNotesOff(int channel) noexcept
 {
     updateBass(router.allNotesOff(channel).bass);
-    for (auto& voice : voices)
-        if (voice.channel == channel && voice.keyDown)
-        {
-            voice.keyDown = false;
-            voice.envelope.stop();
-        }
+    for (auto& furnace : furnaces) furnace.release(channel, -1);
+}
+
+void Engine::startBass(BassVoice& voice) noexcept
+{
+    const auto key = router.bassKey();
+    voice.start(NoteRouter::bassFrequency(key.note), key.velocity);
 }
 
 void Engine::updateBass(NoteRouter::Change change) noexcept
@@ -164,7 +235,8 @@ void Engine::updateBass(NoteRouter::Change change) noexcept
     {
         bassChannel = key.channel;
         bassBendOffset.reset(0.0);
-        bassVoice.start(NoteRouter::bassFrequency(key.note), key.velocity);
+        startBass(bassVoices[bassSlot]);
+        if (bassFade > 0) startBass(bassVoices[1 - bassSlot]);
     }
     else if (change == NoteRouter::Change::retarget)
     {
@@ -173,11 +245,11 @@ void Engine::updateBass(NoteRouter::Change change) noexcept
         bassChannel = key.channel;
         bassBendOffset.reset(oldRatio - bend[static_cast<std::size_t>(bassChannel - 1)].value());
         bassBendOffset.setTarget(0.0, transitionSamples);
-        bassVoice.retargetVelocity(key.velocity);
+        for (auto& voice : bassVoices) voice.retargetVelocity(key.velocity);
     }
     else if (change == NoteRouter::Change::release)
     {
-        bassVoice.stop();
+        for (auto& voice : bassVoices) voice.stop();
     }
 }
 
@@ -225,8 +297,8 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
             bendRatio[channel][i] = bend[channel].next();
     for (std::size_t i = 0; i < samples; ++i)
     {
-        rhythmGain[i] = rhythmFade.next() * rhythmMixLevel.next();
-        bassGain[i] = bassFade.next() * bassMixLevel.next() * anvilBalance;
+        rhythmGain[i] = rhythmPower.next() * rhythmMixLevel.next();
+        bassGain[i] = bassPower.next() * bassMixLevel.next() * anvilBalance;
     }
     // A layer switched off stops synthesis at the sample its fade reaches
     // zero, discarding its histories. MIDI tracking continues, so re-entry
@@ -240,7 +312,19 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         return samples;
     };
     const auto rhythmCount = audibleUntil(rhythmSuspended, rhythmEnabled, rhythmGain);
-    renderRhythm(static_cast<int>(rhythmCount));
+    furnaces[furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, rhythmLeft, rhythmRight);
+    if (furnaceFade > 0)
+    {
+        furnaces[1 - furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, outgoingLeft, outgoingRight);
+        for (std::size_t i = 0; i < rhythmCount && furnaceFade > 0; ++i)
+        {
+            float in = 1.0f, out = 0.0f;
+            fadeWeights(furnaceFade--, modeFadeSamples, in, out);
+            rhythmLeft[i] = in * rhythmLeft[i] + out * outgoingLeft[i];
+            rhythmRight[i] = in * rhythmRight[i] + out * outgoingRight[i];
+        }
+        if (furnaceFade == 0) finishFurnaceFade();
+    }
     if (!rhythmSuspended && !rhythmEnabled && rhythmCount > 0 && rhythmGain[rhythmCount - 1] == 0.0)
     {
         clearRhythm(); rhythmSuspended = true;
@@ -249,10 +333,23 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     const auto& bassBend = bendRatio[static_cast<std::size_t>(bassChannel - 1)];
     std::array<float, controlBlock> bass{};
     for (std::size_t i = 0; i < bassCount; ++i)
-        bass[i] = static_cast<float>(bassGain[i] * bassVoice.next(bassBend[i] + bassBendOffset.next(), component).output);
+    {
+        const auto ratio = bassBend[i] + bassBendOffset.next();
+        auto value = bassVoices[bassSlot].next(ratio, component).output;
+        if (bassFade > 0)
+        {
+            float in = 1.0f, out = 0.0f;
+            fadeWeights(bassFade--, modeFadeSamples, in, out);
+            value = in * value + out * bassVoices[1 - bassSlot].next(ratio, component).output;
+            if (bassFade == 0) finishBassFade();
+        }
+        bass[i] = static_cast<float>(bassGain[i] * value);
+    }
     if (!bassSuspended && !bassEnabled && bassCount > 0 && bassGain[bassCount - 1] == 0.0)
     {
-        bassVoice.reset(); bassBendOffset.reset(0.0); bassSuspended = true;
+        for (auto& voice : bassVoices) voice.reset();
+        if (bassFade > 0) finishBassFade();
+        bassBendOffset.reset(0.0); bassSuspended = true;
     }
 
     const auto mask = static_cast<unsigned>(outputMask);
@@ -269,93 +366,6 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     }
 }
 
-void Engine::renderRhythm(int count) noexcept
-{
-    const auto samples = static_cast<std::size_t>(count);
-    std::fill_n(sumLeft.begin(), samples, 0.0f);
-    std::fill_n(sumRight.begin(), samples, 0.0f);
-    std::fill_n(strongestEnvelope.begin(), samples, 0.0);
-    std::fill_n(strongestVelocity.begin(), samples, 0.0);
-    // Voice by voice over the block, in 32-bit float; the sums add voices in
-    // bank order, so results never depend on which voices are free.
-    for (auto& voice : voices)
-    {
-        const auto& ratio = bendRatio[static_cast<std::size_t>(std::max(voice.channel, 1) - 1)];
-        for (std::size_t i = 0; i < samples; ++i)
-        {
-            if (!voice.active())
-            {
-                voice.lastOutput = {};
-                continue;
-            }
-            // Pitch follows the bend at control rate: a 2 ms bend ramp moves
-            // in steps of 0.7 ms or less, too fine to hear as stepping.
-            if (voice.controlCountdown == 0)
-            {
-                voice.oscillators.setPitch(voice.frequency * ratio[i], rate);
-                voice.controlCountdown = controlBlock;
-            }
-            --voice.controlCountdown;
-            auto output = voice.oscillators.next();
-            const auto envelope = voice.envelope.next();
-            strongestVelocity[i] = std::max(strongestVelocity[i], voice.velocity);
-            strongestEnvelope[i] = std::max(strongestEnvelope[i], envelope);
-            const auto gain = static_cast<float>(envelope * voice.velocity);
-            output.left *= gain;
-            output.right *= gain;
-            if (voice.transitionRemaining > 0)
-            {
-                // A convex blend from the last sample bounds even rapid steals,
-                // without resetting a live waveform abruptly or adding a clipper.
-                const auto oldWeight = static_cast<double>(voice.transitionRemaining--) / transitionSamples;
-                strongestEnvelope[i] = std::max(strongestEnvelope[i], oldWeight);
-                const auto weight = static_cast<float>(oldWeight);
-                output.left = weight * voice.transitionStart.left + (1.0f - weight) * output.left;
-                output.right = weight * voice.transitionStart.right + (1.0f - weight) * output.right;
-            }
-            voice.lastOutput = output;
-            sumLeft[i] += output.left;
-            sumRight[i] += output.right;
-        }
-    }
-    for (std::size_t i = 0; i < samples; ++i)
-    {
-        // Factor the strongest note's velocity out of the nonlinear drive and
-        // restore it afterwards: single-note velocity changes loudness only.
-        // Other chord notes retain their relative weights in the summed bus.
-        // Smooth reference changes when a louder/quieter note joins or leaves.
-        const auto velocity = strongestVelocity[i];
-        if (velocity > 0.0)
-        {
-            if (!rhythmWasActive) rhythmLevel.reset(velocity);
-            else if (velocity != rhythmLevelTarget) rhythmLevel.setTarget(velocity, transitionSamples);
-            rhythmLevelTarget = velocity;
-        }
-        rhythmWasActive = velocity > 0.0;
-        const auto level = rhythmLevel.next();
-        const auto envelope = static_cast<float>(strongestEnvelope[i]);
-        const auto restore = static_cast<float>(level), normalize = static_cast<float>(1.0 / level);
-        auto drivenLeft = rhythmBus[0].drive(sumLeft[i] * normalize, envelope, restore);
-        auto drivenRight = rhythmBus[1].drive(sumRight[i] * normalize, envelope, restore);
-        // Dense and even: the multiband dynamics see the velocity-normalized
-        // wall, so velocity still changes loudness only.
-        furnaceDynamics.process(drivenLeft, drivenRight);
-        const auto processedLeft = rhythmBus[0].tone(drivenLeft);
-        const auto processedRight = rhythmBus[1].tone(drivenRight);
-        // Width still comes from independent synthesis. This final bounded
-        // blend reserves common energy after nonlinear processing as well.
-        // Mono below about 150 Hz: chords stay solid on a club system or a
-        // phone speaker, and the side signal never fights Anvil.
-        const auto mid = 0.5f * (processedLeft + processedRight);
-        const auto side = sideHighpass.next(0.5f * (processedLeft - processedRight)) * static_cast<float>(RhythmOscillators::spread);
-        // Both sides share one envelope and velocity, so one gain gates both,
-        // after every filter: the chop stays dead-stop hard.
-        const auto gain = rhythmBus[0].gain();
-        rhythmLeft[i] = gain * (mid + side);
-        rhythmRight[i] = gain * (mid - side);
-    }
-}
-
 Engine::NoteTarget Engine::bassTarget() const noexcept
 {
     const auto key = router.bassKey();
@@ -368,17 +378,5 @@ Engine::NoteTarget Engine::leadTarget() const noexcept
     const auto key = router.leadKey();
     if (!key.held()) return {};
     return {key.channel, key.note, key.velocity, NoteRouter::frequency(key.note)};
-}
-
-std::array<Engine::RhythmTarget, Engine::rhythmVoiceCount> Engine::rhythmTargets() const noexcept
-{
-    std::array<RhythmTarget, rhythmVoiceCount> result{};
-    for (std::size_t i = 0; i < voices.size(); ++i)
-    {
-        const auto& v = voices[i];
-        result[i] = {v.channel, v.note, v.channel > 0 ? v.frequency * bend[static_cast<std::size_t>(v.channel - 1)].value() : 0.0,
-                     v.keyDown, v.active()};
-    }
-    return result;
 }
 }

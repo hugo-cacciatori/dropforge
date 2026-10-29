@@ -91,7 +91,13 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 5, "output plus power and level for each layer");
+    require(source.getParameters().size() == 7, "output plus power, level and mode for each layer");
+    for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode})
+    {
+        const auto* mode = dynamic_cast<juce::AudioParameterChoice*>(source.parameterState().getParameter(id));
+        require(mode != nullptr && mode->choices.size() == 4 && mode->getIndex() == 0,
+                "each mode parameter offers A-D from the start and defaults to A");
+    }
     for (const auto* retired : {"xover_hz", "destruction", "guitar_mono", "rhythm_mono", "output_db", "bass_enabled"})
         require(source.parameterState().getParameter(retired) == nullptr, "no Ironstack legacy parameter IDs");
     require(toggle(source, dropforge::parameters::bassEnabled) && toggle(source, dropforge::parameters::rhythmEnabled)

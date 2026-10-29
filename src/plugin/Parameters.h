@@ -10,4 +10,7 @@ inline constexpr auto bassEnabled = "bass_on";
 inline constexpr auto bassLevel = "bass_level";
 inline constexpr auto rhythmEnabled = "rhythm_on";
 inline constexpr auto rhythmLevel = "rhythm_level";
+// Modes A-D (SPEC section 12); all four choices exist from the first release.
+inline constexpr auto bassMode = "bass_mode";
+inline constexpr auto rhythmMode = "rhythm_mode";
 }
