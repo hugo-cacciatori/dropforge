@@ -158,10 +158,24 @@ public:
     // every width, and width 0.5 is a +-1 square.
     float nextPulse(double width) noexcept
     {
-        const auto offset = static_cast<std::uint32_t>(std::llround(std::clamp(width, 0.0, 1.0) * 4294967295.0));
-        const auto value = read(phase - offset) - read(phase);
+        const auto value = read(phase - phaseOffset(width)) - read(phase);
         phase += increment;
         return value;
+    }
+
+    // saw - amount x pulse-shifted saw: a saw/pulse blend in two reads. With
+    // amount a and offset phaseOffset(w), it equals (1 - a) x saw minus
+    // a x nextPulse(w). Compute the offset at control rate.
+    float nextBlend(std::uint32_t offset, float amount) noexcept
+    {
+        const auto value = read(phase) - amount * read(phase - offset);
+        phase += increment;
+        return value;
+    }
+    static std::uint32_t phaseOffset(double width) noexcept
+    {
+        return static_cast<std::uint32_t>(std::llround((std::isfinite(width) ? std::clamp(width, 0.0, 1.0) : 0.5)
+                                                       * 4294967295.0));
     }
 
     std::uint32_t currentPhase() const noexcept { return phase; }

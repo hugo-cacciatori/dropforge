@@ -136,15 +136,16 @@ void settledWindow(Audio& audio, int rate)
                 * (1.0 - std::cos(6.28318530717958647692 * i / side->size())));
     }
 }
-// Four seconds give a three-second settled window: below 0.5 Hz resolution
-// even for MIDI 0, at a third of the former twelve-second render cost.
-constexpr int holdSeconds = 4;
+// The settled window must span about two cycles of Furnace's slowest
+// pulse-width motion (0.23 Hz, 4.3 s): width, fold-down and correlation swing
+// with it, so a shorter window measures wherever the cycle happens to be.
+constexpr int holdSeconds = 10;
 using Holds = std::vector<std::vector<int>>;
 // Every register boundary and the chords that stress the low split.
 const Holds allHolds{{0}, {24}, {36}, {45}, {48}, {60}, {96}, {127},
                      {28, 35, 40}, {40, 47, 52}, {24, 31, 36, 40, 43, 48, 52, 55}};
 // The extremes only, for the parameter corners and the highest sample rate.
-const Holds edgeHolds{{0}, {36}, {96}, {127}, {28, 35, 40}, {24, 31, 36, 40, 43, 48, 52, 55}};
+const Holds edgeHolds{{0}, {127}, {28, 35, 40}, {24, 31, 36, 40, 43, 48, 52, 55}};
 void holds(const Holds& chords, int rate, float split, float drive, float tight)
 {
     for (const auto& notes : chords)

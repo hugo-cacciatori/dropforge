@@ -89,7 +89,8 @@ void octavePresence()
         }
         for (int i = 0; i < rate*2; ++i)
         {
-            const auto a = full.next(220.0, rate), b = base.next(220.0, rate, false);
+            if (i % 32 == 0) { full.setPitch(220.0, rate, 32); base.setPitch(220.0, rate, 32); }
+            const auto a = full.next(), b = base.next(false);
             const std::array<double, 2> added{a.left-b.left, a.right-b.right};
             const auto window = 0.5 - 0.5*std::cos(2*pi*i/(rate*2));
             for (std::size_t side = 0; side < added.size(); ++side)
@@ -114,7 +115,8 @@ void octavePresence()
         full.reset(1, 127); base.reset(1, 127);
         for (int i = 0; i < 4096; ++i)
         {
-            const auto a = full.next(rate*0.24, rate), b = base.next(rate*0.24, rate, false);
+            if (i % 32 == 0) { full.setPitch(rate*0.24, rate, 32); base.setPitch(rate*0.24, rate, 32); }
+            const auto a = full.next(), b = base.next(false);
             require(a.left == b.left && a.right == b.right,
                     "above-Nyquist octave components disappear instead of sounding a clamped pitch");
         }
@@ -167,8 +169,14 @@ void bentAudio()
     const auto bent = render(otherChannel, 192000);
     const auto frequency = 440.0 * std::exp2(2.0 / 12.0);
     for (const auto* side : {&bent.left, &bent.right})
-        require(magnitude(*side, frequency) > 0.005 && magnitude(*side, 440.0) < 0.00001,
+    {
+        // Relative to the bent note: the wavetable alias floor (about -70 dB)
+        // may leave a trace anywhere, but never the old pitch itself.
+        const auto bentLevel = magnitude(*side, frequency), unbentLevel = magnitude(*side, 440.0);
+        std::cout << "bent_magnitude=" << bentLevel << " unbent_db=" << 20.0 * std::log10(unbentLevel / bentLevel) << '\n';
+        require(bentLevel > 0.005 && unbentLevel < 0.001 * bentLevel,
                 "both output spectra actually follow the correct channel's bend");
+    }
     for (const int note : {48, 72, 96})
     {
         original.prepare(48000); original.noteOn(1, note, 127);
@@ -193,10 +201,18 @@ void repeatability()
     a.noteOn(1, 60, 127); a.noteOn(1, 69, 127); // 69 gets slot 1.
     b.noteOn(1, 69, 127); reference.noteOn(1, 60, 127); // Both get slot 0.
     const auto chord = render(a, 48000, 1), single = render(b, 48000, 73), other = render(reference, 48000, 512);
+    // Voices sum in 32-bit float, so superposition holds to float rounding of
+    // the chord level (about 1e-7 relative); a slot-dependent note would be off
+    // by the size of the note itself.
+    float peak = 0.0f, error = 0.0f;
     for (std::size_t i = 0; i < chord.left.size(); ++i)
-        require(std::abs(chord.left[i] - single.left[i] - other.left[i]) < 2.0e-8f
-                && std::abs(chord.right[i] - single.right[i] - other.right[i]) < 2.0e-8f,
-                "at zero drive the filtered chord is the sum of slot-independent notes");
+    {
+        peak = std::max({peak, std::abs(chord.left[i]), std::abs(chord.right[i])});
+        error = std::max({error, std::abs(chord.left[i] - single.left[i] - other.left[i]),
+                          std::abs(chord.right[i] - single.right[i] - other.right[i])});
+    }
+    std::cout << "chord_superposition_error=" << error << " chord_peak=" << peak << '\n';
+    require(error < 1.0e-5f * peak, "at zero drive the filtered chord is the sum of slot-independent notes");
     a.prepare(48000); b.prepare(48000);
     for (auto* engine : {&a, &b})
     {

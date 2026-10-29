@@ -128,8 +128,8 @@ void measure(double rate, double amount, const Phrase& phrase, double& error)
         for (int v = 0; v < phrase.count; ++v)
         {
             if (!envelope.active()) continue;
-            const auto hz = 440.0 * std::exp2((phrase.notes[v] - 69) / 12.0);
-            const auto s = voices[v].next(hz, rate);
+            if (i % 32 == 0) voices[v].setPitch(440.0 * std::exp2((phrase.notes[v] - 69) / 12.0), rate, 32);
+            const auto s = voices[v].next();
             sum.left += s.left * env; sum.right += s.right * env;
         }
         auto l = left.next(sum.left, env, error), r = right.next(sum.right, env, error);

@@ -67,6 +67,9 @@ private:
         double frequency = 0.0, velocity = 0.0;
         RhythmOscillators::Stereo lastOutput{}, transitionStart{};
         int channel = 0, note = -1, transitionRemaining = 0;
+        // Each voice's own control clock starts at its note-on, so a note
+        // sounds the same whenever it starts and whatever the host block size.
+        int controlCountdown = 0;
         std::uint64_t age = 0;
         bool keyDown = false;
         bool active() const noexcept { return envelope.active() || transitionRemaining > 0; }
@@ -101,6 +104,7 @@ private:
     using Block = std::array<double, controlBlock>;
     std::array<Block, 16> bendRatio{};
     Block rhythmGain{}, bassGain{}, rhythmLeft{}, rhythmRight{};
-    Block sumLeft{}, sumRight{}, strongestEnvelope{}, strongestVelocity{};
+    Block strongestEnvelope{}, strongestVelocity{};
+    std::array<float, controlBlock> sumLeft{}, sumRight{};
 };
 }

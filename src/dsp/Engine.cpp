@@ -105,6 +105,9 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
     voice.oscillators.reset(channel, note);
     voice.envelope.start();
     voice.frequency = NoteRouter::frequency(note);
+    // Pitch now; the voice's control updates then keep it following the bend.
+    voice.oscillators.setPitch(voice.frequency * bend[static_cast<std::size_t>(channel - 1)].value(), rate, 0);
+    voice.controlCountdown = controlBlock;
     voice.velocity = std::min(velocity, 127) / 127.0;
     voice.channel = channel;
     voice.note = note;
@@ -250,12 +253,12 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
 void Engine::renderRhythm(int count) noexcept
 {
     const auto samples = static_cast<std::size_t>(count);
-    std::fill_n(sumLeft.begin(), samples, 0.0);
-    std::fill_n(sumRight.begin(), samples, 0.0);
+    std::fill_n(sumLeft.begin(), samples, 0.0f);
+    std::fill_n(sumRight.begin(), samples, 0.0f);
     std::fill_n(strongestEnvelope.begin(), samples, 0.0);
     std::fill_n(strongestVelocity.begin(), samples, 0.0);
-    // Voice by voice over the block; the sums still add voices in bank order,
-    // so every sample is bit-identical to a sample-by-sample loop.
+    // Voice by voice over the block, in 32-bit float; the sums add voices in
+    // bank order, so results never depend on which voices are free.
     for (auto& voice : voices)
     {
         const auto& ratio = bendRatio[static_cast<std::size_t>(std::max(voice.channel, 1) - 1)];
@@ -266,11 +269,19 @@ void Engine::renderRhythm(int count) noexcept
                 voice.lastOutput = {};
                 continue;
             }
-            auto output = voice.oscillators.next(voice.frequency * ratio[i], rate);
+            // Pitch follows the bend at control rate: a 2 ms bend ramp moves
+            // in steps of 0.7 ms or less, too fine to hear as stepping.
+            if (voice.controlCountdown == 0)
+            {
+                voice.oscillators.setPitch(voice.frequency * ratio[i], rate, controlBlock);
+                voice.controlCountdown = controlBlock;
+            }
+            --voice.controlCountdown;
+            auto output = voice.oscillators.next();
             const auto envelope = voice.envelope.next();
             strongestVelocity[i] = std::max(strongestVelocity[i], voice.velocity);
             strongestEnvelope[i] = std::max(strongestEnvelope[i], envelope);
-            const auto gain = envelope * voice.velocity;
+            const auto gain = static_cast<float>(envelope * voice.velocity);
             output.left *= gain;
             output.right *= gain;
             if (voice.transitionRemaining > 0)
@@ -279,8 +290,9 @@ void Engine::renderRhythm(int count) noexcept
                 // without resetting a live waveform abruptly or adding a clipper.
                 const auto oldWeight = static_cast<double>(voice.transitionRemaining--) / transitionSamples;
                 strongestEnvelope[i] = std::max(strongestEnvelope[i], oldWeight);
-                output.left = oldWeight * voice.transitionStart.left + (1.0 - oldWeight) * output.left;
-                output.right = oldWeight * voice.transitionStart.right + (1.0 - oldWeight) * output.right;
+                const auto weight = static_cast<float>(oldWeight);
+                output.left = weight * voice.transitionStart.left + (1.0f - weight) * output.left;
+                output.right = weight * voice.transitionStart.right + (1.0f - weight) * output.right;
             }
             voice.lastOutput = output;
             sumLeft[i] += output.left;
