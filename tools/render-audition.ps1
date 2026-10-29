@@ -4,12 +4,16 @@
 # Runs on Windows PowerShell 5.1 and PowerShell 7.
 #
 #   powershell -NoProfile -File tools/render-audition.ps1 -Round r1 -Label ironstack
+# -Parts and -Phrases limit what is rendered (default: every part and phrase),
+# which keeps large rounds inside the disk budget.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9-]+$')][string]$Round,
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9-]+$')][string]$Label,
     [string]$BuildDirectory = '',
-    [string[]]$RendererOptions = @()
+    [string[]]$RendererOptions = @(),
+    [ValidateSet('mix', 'anvil', 'furnace')][string[]]$Parts = @('mix', 'anvil', 'furnace'),
+    [string[]]$Phrases = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,12 +32,14 @@ New-Item -ItemType Directory -Path $midi -Force | Out-Null
 & python -I (Join-Path $PSScriptRoot 'make_phrases.py') $midi | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not write the listening phrases.' }
 
-$parts = [ordered]@{ mix = 'both'; anvil = 'bass'; furnace = 'rhythm' }
-foreach ($file in Get-ChildItem -LiteralPath $midi -Filter '*.mid' | Sort-Object Name) {
-    foreach ($part in $parts.Keys) {
+$masks = [ordered]@{ mix = 'both'; anvil = 'bass'; furnace = 'rhythm' }
+$files = Get-ChildItem -LiteralPath $midi -Filter '*.mid' | Sort-Object Name
+if ($Phrases.Count -gt 0) { $files = $files | Where-Object { $Phrases -contains $_.BaseName } }
+foreach ($file in $files) {
+    foreach ($part in @($masks.Keys | Where-Object { $Parts -contains $_ })) {
         $stem = Join-Path $folder ('{0}_{1}_{2}' -f $Label, $file.BaseName, $part)
         foreach ($old in @("$stem.wav", "$stem.json")) { if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old } }
-        $arguments = @($file.FullName, "$stem.wav", "$stem.json", '--layer-mask', $parts[$part], '--tail-seconds', '0.5') + $RendererOptions
+        $arguments = @($file.FullName, "$stem.wav", "$stem.json", '--layer-mask', $masks[$part], '--tail-seconds', '0.5') + $RendererOptions
         & $renderer @arguments | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "render_tool failed for $stem" }
         $metrics = Get-Content -LiteralPath "$stem.json" -Raw | ConvertFrom-Json
