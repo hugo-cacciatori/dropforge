@@ -34,7 +34,7 @@ public:
     // Final post-drive side blend (applied by Engine after all nonlinear stages).
     static constexpr double spread = 0.84;
 
-    void setDesign(const Design& next) noexcept { design = next; }
+    void setDesign(const Design& next) noexcept { design = next; pitchHz = -1.0; }
 
     void reset(int channel, int note) noexcept
     {
@@ -58,6 +58,11 @@ public:
     // Control rate: pitch for every oscillator and the octave stack's fade.
     void setPitch(double frequency, double rate) noexcept
     {
+        // A held note without bend asks for the same pitch every control
+        // block: skip the dozens of exp2/log2 calls that would land on the
+        // same values. (The result depends only on pitch, rate and design.)
+        if (frequency == pitchHz && rate == pitchRate) return;
+        pitchHz = frequency; pitchRate = rate;
         const auto& bank = dsp_core::WavetableBank::saw();
         for (std::size_t side = 0; side < 2; ++side)
         {
@@ -107,15 +112,17 @@ public:
         // A pulse at width 0.5 is two saw reads half a cycle apart.
         const auto square = body.nextPulse(0.5);
         std::array<float, 2> sum{};
+        const auto fm = design.fm();
+        const auto* table = fm ? dsp_core::sineTable() : nullptr;
         for (std::size_t side = 0; side < 2; ++side)
         {
-            if (design.fm())
+            if (fm)
                 for (std::size_t i = 0; i < mainCount; ++i)
                 {
                     const auto phase = fmPhase[side][i];
                     fmPhase[side][i] += fmIncrement[side][i];
-                    const auto modulation = fmDepth1[side] * dsp_core::sine(phase) + fmDepth2[side] * dsp_core::sine(2u * phase);
-                    sum[side] += mainWeights[i] * dsp_core::sine(phase + static_cast<std::uint32_t>(static_cast<std::int64_t>(modulation)));
+                    const auto modulation = fmDepth1[side] * dsp_core::sine(table, phase) + fmDepth2[side] * dsp_core::sine(table, 2u * phase);
+                    sum[side] += mainWeights[i] * dsp_core::sine(table, phase + static_cast<std::uint32_t>(static_cast<std::int64_t>(modulation)));
                 }
             else
                 for (std::size_t i = 0; i < mainCount; ++i) sum[side] += mainWeights[i] * main[side][i].next();
@@ -144,6 +151,7 @@ private:
     std::array<std::array<dsp_core::WavetableOscillator, octaveCount>, 2> octave{};
     dsp_core::WavetableOscillator body;
     float octaveGain = 0.0f, bodyGain = 0.0f;
+    double pitchHz = -1.0, pitchRate = -1.0;
     std::array<float, 2> fmDepth1{}, fmDepth2{};
     std::array<std::array<std::uint32_t, mainCount>, 2> fmPhase{}, fmIncrement{};
 };
