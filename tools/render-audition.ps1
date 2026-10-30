@@ -1,6 +1,6 @@
 # Renders the listening phrases (tools/make_phrases.py) through render_tool for
-# one candidate: the full mix plus Anvil-only and Furnace-only stems, which keep
-# the full-mix note routing. Output: build/auditions/<Round>/<Label>_<phrase>_<part>.wav
+# one candidate: the full mix plus Anvil-only, Furnace-only and Blade-only
+# stems, which keep the full-mix note routing. Output: build/auditions/<Round>/<Label>_<phrase>_<part>.wav
 # Runs on Windows PowerShell 5.1 and PowerShell 7.
 #
 #   powershell -NoProfile -File tools/render-audition.ps1 -Round r1 -Label ironstack
@@ -12,7 +12,7 @@ param(
     [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9-]+$')][string]$Label,
     [string]$BuildDirectory = '',
     [string[]]$RendererOptions = @(),
-    [ValidateSet('mix', 'anvil', 'furnace')][string[]]$Parts = @('mix', 'anvil', 'furnace'),
+    [ValidateSet('mix', 'anvil', 'furnace', 'blade')][string[]]$Parts = @('mix', 'anvil', 'furnace'),
     [string[]]$Phrases = @()
 )
 
@@ -32,7 +32,7 @@ New-Item -ItemType Directory -Path $midi -Force | Out-Null
 & python -I (Join-Path $PSScriptRoot 'make_phrases.py') $midi | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not write the listening phrases.' }
 
-$masks = [ordered]@{ mix = 'both'; anvil = 'bass'; furnace = 'rhythm' }
+$masks = [ordered]@{ mix = 'all'; anvil = 'bass'; furnace = 'rhythm'; blade = 'lead' }
 $files = Get-ChildItem -LiteralPath $midi -Filter '*.mid' | Sort-Object Name
 if ($Phrases.Count -gt 0) { $files = $files | Where-Object { $Phrases -contains $_.BaseName } }
 foreach ($file in $files) {

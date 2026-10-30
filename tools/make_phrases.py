@@ -58,11 +58,39 @@ def phrase_held():
     return 120, 9.0, [(0.0, 8.0, n) for n in [40, 47, 52, 55, 59, 64]]
 
 
+def phrase_anthem():
+    """A lead melody over power chords in E minor (Em, C, G, D), all three
+    instruments together: Anvil takes the roots, Furnace the chords and Blade
+    the melody, the highest key. Bars 1-2 are played legato (each note
+    overlaps the next), bars 3-4 detached, so Portamento's modes differ."""
+    rows = []
+    for bar, root in enumerate([40, 36, 43, 38]):
+        rows += [(bar * 4.0, 4.0, n) for n in (root, root + 7, root + 12)]
+    legato = [(0, 64), (1, 67), (2, 69), (3, 71), (4, 74), (5, 71), (6, 69), (7, 67)]
+    rows += [(beat, 1.1, note) for beat, note in legato]
+    detached = [(8, 64), (9, 66), (10, 67), (11, 71), (12, 69), (13.5, 67), (14, 66)]
+    rows += [(beat, 0.6, note) for beat, note in detached]
+    rows += [(14.5, 1.5, 64)]
+    return 120, 16.0, rows
+
+
+def phrase_line():
+    """A lead line for Blade on its own: a legato run up (overlapping notes),
+    a rest, then detached notes back down, for hearing Portamento."""
+    rows = [(beat, 0.6, note) for beat, note in [(0, 64), (0.5, 67), (1, 71), (1.5, 74)]]
+    rows += [(2.0, 1.5, 76)]
+    rows += [(beat, 0.4, note) for beat, note in [(4, 74), (4.5, 71), (5, 67)]]
+    rows += [(5.5, 2.0, 64)]
+    return 110, 8.0, rows
+
+
 PHRASES = {
     'chords': phrase_chords,
     'breakdown': phrase_breakdown,
     'stabs': phrase_stabs,
     'held': phrase_held,
+    'anthem': phrase_anthem,
+    'line': phrase_line,
 }
 
 
