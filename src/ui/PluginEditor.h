@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "InstrumentPage.h"
 #include "PerformanceStrip.h"
+#include "FxPage.h"
 
 class DropforgeProcessor;
 
@@ -28,6 +29,11 @@ public:
     juce::Label& helpLine() noexcept { return hoverHelp; }
     dropforge::ui::RoutingKeyboard& routingKeyboard() noexcept { return keyboard; }
     dropforge::ui::PerformanceStrip& performanceStrip() noexcept { return strip; }
+    dropforge::ui::FxTab& effectsTab() noexcept { return fxTab; }
+    dropforge::ui::FxPage& effectsPage() noexcept { return *fxPage; }
+    NumericKnob& spaceKnob() noexcept { return space; }
+    // The FX page's slot in signal order (Ctrl+5); Motion takes 4 in M4.
+    static constexpr int fxPageIndex = 4;
     static constexpr int pageCount = 3; // Anvil, Furnace, Blade: signal order
 
 private:
@@ -50,6 +56,11 @@ private:
     dropforge::ui::OutputMeter meter;
     dropforge::ui::RoutingKeyboard keyboard;
     dropforge::ui::PerformanceStrip strip;
+    dropforge::ui::FxTab fxTab;
+    std::unique_ptr<dropforge::ui::FxPage> fxPage;
+    juce::Label spaceLabel;
+    NumericKnob space;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> spaceAttachment;
     juce::TextButton mark{"DROPFORGE"}, panic{"Panic"}, about{"i"};
     std::array<std::unique_ptr<dropforge::ui::InstrumentTab>, pageCount> tabs;
     std::array<std::unique_ptr<dropforge::ui::InstrumentPage>, pageCount> pages;

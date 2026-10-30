@@ -654,9 +654,10 @@ void editorTests(const juce::String& snapshot)
         require(editor->getLocalBounds().expanded(1).contains(shown)
                 && (std::abs(shown.getWidth() - size.x) <= 1 || std::abs(shown.getHeight() - size.y) <= 1),
                 "the scaled canvas fills the window without cropping");
-        for (int page = 0; page < 3; ++page)
+        for (int page = 0; page < 4; ++page)
         {
-            editor->tab(page).onClick();
+            if (page < 3) editor->tab(page).onClick();
+            else editor->effectsTab().onClick();
             std::vector<juce::Component*> parts;
             collect(canvas, parts, true);
             for (auto* part : parts)
@@ -734,6 +735,43 @@ void editorTests(const juce::String& snapshot)
     strip.glideSwitch().setToggleState(false, juce::sendNotificationSync);
     strip.bendSelector().button(0).onClick();
     strip.wheelSelector().button(0).onClick();
+
+    // The FX page (SPEC sections 6 and 8): its tab, Ctrl+5, power per strip,
+    // selectors and compact knobs on the same host parameters; Space in the header.
+    auto& fxPage = editor->effectsPage();
+    editor->effectsTab().onClick();
+    refreshUi();
+    require(processor.currentPage() == DropforgeEditor::fxPageIndex && fxPage.isVisible() && !editor->instrumentPage(0).isVisible()
+            && editor->effectsTab().getToggleState() && editor->effectsTab().effectsOn() == 0, "the FX tab opens its page, every effect off");
+    for (const auto* name : {"DELAY", "REVERB", "SATURATE", "CRUSH", "CHORUS", "EQ"})
+        require(fxPage.powerSwitch(name) != nullptr, "every effect has a power switch");
+    fxPage.powerSwitch("DELAY")->setToggleState(true, juce::sendNotificationSync);
+    fxPage.powerSwitch("CHORUS")->setToggleState(true, juce::sendNotificationSync);
+    refreshUi();
+    require(toggle(processor, ids::fxDelayOn) && toggle(processor, ids::fxChorusOn) && editor->effectsTab().effectsOn() == 2,
+            "a strip's power switch drives its effect and the tab counts it");
+    fxPage.choiceFor(ids::fxDelayDivision)->button(4).onClick();
+    fxPage.choiceFor(ids::fxDelayFeel)->button(2).onClick();
+    require(choice(processor, ids::fxDelayDivision) == 4 && choice(processor, ids::fxDelayFeel) == 2, "Division and Feel select their values");
+    auto* highCut = fxPage.knobFor(ids::fxDelayHighCut);
+    require(highCut != nullptr && highCut->getTextFromValue(6500.0) == "6.5k" && highCut->getTextFromValue(280.0) == "280"
+            && highCut->getValueFromText("8k") == 8000.0, "frequencies read and type as 280 or 6.5k");
+    highCut->setValue(9000.0, juce::sendNotificationSync);
+    require(std::abs(processor.parameterState().getRawParameterValue(ids::fxDelayHighCut)->load() - 9000.0f) < 1.0f, "a compact knob drives its parameter");
+    editor->spaceKnob().setValue(75.0, juce::sendNotificationSync);
+    require(std::abs(processor.parameterState().getRawParameterValue(ids::spaceAmount)->load() - 75.0f) < 0.01f, "Space in the header drives both wets");
+    editor->tab(0).onClick();
+    require(editor->keyPressed(juce::KeyPress('5', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == DropforgeEditor::fxPageIndex,
+            "Ctrl+5 opens the FX page");
+    editor->tab(0).onClick();
+    refreshUi();
+    require(!fxPage.isVisible() && editor->instrumentPage(0).isVisible(), "an instrument tab hides the FX page again");
+    fxPage.powerSwitch("DELAY")->setToggleState(false, juce::sendNotificationSync);
+    fxPage.powerSwitch("CHORUS")->setToggleState(false, juce::sendNotificationSync);
+    fxPage.choiceFor(ids::fxDelayDivision)->button(3).onClick();
+    fxPage.choiceFor(ids::fxDelayFeel)->button(1).onClick();
+    highCut->setValue(6500.0, juce::sendNotificationSync);
+    editor->spaceKnob().setValue(50.0, juce::sendNotificationSync);
     if (snapshot.isNotEmpty())
     {
         setOutput(processor, 0);
@@ -758,6 +796,13 @@ void editorTests(const juce::String& snapshot)
                 editor->tab(page).onClick();
                 save(juce::String(std::array{"anvil", "furnace", "blade"}[(std::size_t) page]) + "-" + juce::String(percent));
             }
+            // The FX page with the Delay and Reverb lit.
+            setToggle(processor, ids::fxDelayOn, true);
+            setToggle(processor, ids::fxReverbOn, true);
+            editor->effectsTab().onClick();
+            save("fx-" + juce::String(percent));
+            setToggle(processor, ids::fxDelayOn, false);
+            setToggle(processor, ids::fxReverbOn, false);
         }
         // Every mode finish once, with Destruction and an option lit, for review.
         editor->setSize(1100, 700);

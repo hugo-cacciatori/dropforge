@@ -30,6 +30,9 @@ public:
         if (proportion != marker) { marker = proportion; repaint(); }
     }
     float markerPosition() const noexcept { return marker; }
+    // Frequencies: "280" below 1000 and "6.5k" above, to fit a compact
+    // knob; typing accepts either form.
+    void setKiloFormat(bool shouldUseKilo) { kilo = shouldUseKilo; repaint(); }
     void mouseDown(const juce::MouseEvent& event) override
     {
         // The value under the dial is the place to type (right-click works anywhere).
@@ -142,6 +145,7 @@ public:
     juce::String getTextFromValue(double value) override
     {
         if (getMinimum() == -60.0 && value <= -60.0) return "-inf dB";
+        if (kilo && value >= 1000.0) return juce::String(value / 1000.0, value >= 9950.0 ? 0 : 1) + "k" + getTextValueSuffix();
         return juce::String(value, getNumDecimalPlacesToDisplay()) + getTextValueSuffix();
     }
     double getValueFromText(const juce::String& text) override
@@ -151,10 +155,13 @@ public:
         const auto suffix = getTextValueSuffix().trim();
         if (suffix.isNotEmpty() && stripped.endsWithIgnoreCase(suffix))
             stripped = stripped.dropLastCharacters(suffix.length()).trim();
+        auto factor = 1.0;
+        if (kilo && (stripped.endsWithChar('k') || stripped.endsWithChar('K'))) { factor = 1000.0; stripped = stripped.dropLastCharacters(1).trim(); }
         std::istringstream parser(stripped.toStdString());
         parser.imbue(std::locale::classic());
         double value = 0.0;
         parser >> std::noskipws >> value;
+        value *= factor;
         if (!parser || parser.peek() != std::char_traits<char>::eof() || !std::isfinite(value)
             || value < getMinimum() || value > getMaximum())
         {
@@ -177,6 +184,6 @@ private:
     }
     juce::TextEditor entry;
     juce::String normalTooltip;
-    bool editing = false, typedClick = false, compact = false;
+    bool editing = false, typedClick = false, compact = false, kilo = false;
     float marker = -1.0f;
 };

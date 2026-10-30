@@ -74,6 +74,41 @@ DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
         pages[(size_t) page]->setExplicitFocusOrder(10);
     }
 
+    fxPage = std::make_unique<FxPage>(state);
+    fxTab.setTooltip("FX: echoes, room, warmth, grit, width and tone. Ctrl+5 opens it from anywhere.");
+    fxTab.setHelpText(fxTab.getTooltip());
+    fxTab.setRadioGroupId(1);
+    fxTab.onClick = [this] { selectPage(fxPageIndex); };
+    fxTab.setExplicitFocusOrder(1 + pageCount);
+    canvas.addAndMakeVisible(fxTab);
+    canvas.addChildComponent(*fxPage);
+    fxPage->setExplicitFocusOrder(10);
+
+    // Space (SPEC section 8) in the header: both FX wets at once, from any page.
+    spaceLabel.setText("SPACE", juce::dontSendNotification);
+    spaceLabel.setFont(titleFont(16.0f));
+    spaceLabel.setColour(juce::Label::textColourId, colours::dimText);
+    spaceLabel.setJustificationType(juce::Justification::centredRight);
+    spaceLabel.setInterceptsMouseClicks(false, false);
+    space.setCompact(true);
+    space.setTitle("Space");
+    space.setTooltip("Space: the Delay and Reverb together, from dry (0) through as set (50 %) to twice as wet (100 %). "
+                     "Double-click resets; click the value to type.");
+    space.setHelpText(space.getTooltip());
+    space.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    space.setNumDecimalPlacesToDisplay(0);
+    space.setTextValueSuffix(" %");
+    space.setPopupDisplayEnabled(false, false, nullptr);
+    space.setWantsKeyboardFocus(true);
+    space.setColour(juce::Slider::rotarySliderFillColourId, fxIdentity);
+    spaceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(state, dropforge::parameters::spaceAmount, space);
+    auto* spaceParameter = state.getParameter(dropforge::parameters::spaceAmount);
+    space.setDoubleClickReturnValue(true, spaceParameter->convertFrom0to1(spaceParameter->getDefaultValue()));
+    space.onEntryGesture = [spaceParameter](bool begin) { if (begin) spaceParameter->beginChangeGesture(); else spaceParameter->endChangeGesture(); };
+    space.setExplicitFocusOrder(21);
+    canvas.addAndMakeVisible(spaceLabel);
+    canvas.addAndMakeVisible(space);
+
     mark.getProperties().set("mark", true);
     mark.setTooltip("About Dropforge: version, credits and licence.");
     about.setTooltip(mark.getTooltip());
@@ -136,7 +171,10 @@ DropforgeEditor::~DropforgeEditor()
 void DropforgeEditor::mouseDown(const juce::MouseEvent& event)
 {
     output.commitIfOutside(event.eventComponent);
+    space.commitIfOutside(event.eventComponent);
     for (auto& page : pages) for (auto* knob : page->knobs()) knob->commitIfOutside(event.eventComponent);
+    for (auto* knob : fxPage->knobs()) knob->commitIfOutside(event.eventComponent);
+    for (auto* knob : strip.knobs()) knob->commitIfOutside(event.eventComponent);
 }
 
 bool DropforgeEditor::keyPressed(const juce::KeyPress& key)
@@ -145,6 +183,7 @@ bool DropforgeEditor::keyPressed(const juce::KeyPress& key)
     if (key.getModifiers().isCtrlDown())
         for (int page = 0; page < pageCount; ++page)
             if (key.getKeyCode() == '1' + page) { selectPage(page); return true; }
+    if (key.getModifiers().isCtrlDown() && key.getKeyCode() == '1' + fxPageIndex) { selectPage(fxPageIndex); return true; }
     return false;
 }
 
@@ -191,6 +230,10 @@ void DropforgeEditor::layoutCanvas()
         tabs[(size_t) page]->setBounds(pageArea.getX() + page * 240, 94, 232, 56);
         pages[(size_t) page]->setBounds(pageArea);
     }
+    fxTab.setBounds(pageArea.getX() + pageCount * 240, 94, 160, 56);
+    fxPage->setBounds(pageArea);
+    spaceLabel.setBounds(400, 30, 66, 24);
+    space.setBounds(472, 26, 112, 32);
     strip.setBounds(footerArea.getX() + 24, footerArea.getY() + 6, footerArea.getWidth() - 48, 32);
     keyboard.setBounds(footerArea.getX() + 24, footerArea.getY() + 44, footerArea.getWidth() - 48, 26);
     hoverHelp.setBounds(footerArea.getX() + 24, footerArea.getY() + 72, footerArea.getWidth() - 48, 22);
@@ -216,7 +259,11 @@ void DropforgeEditor::togglePower(int page)
 
 void DropforgeEditor::selectPage(int page)
 {
-    if (page != owner.currentPage()) for (auto* knob : pages[(size_t) owner.currentPage()]->knobs()) knob->finishEntry(true);
+    if (page != owner.currentPage())
+    {
+        if (owner.currentPage() == fxPageIndex) for (auto* knob : fxPage->knobs()) knob->finishEntry(true);
+        else for (auto* knob : pages[(size_t) juce::jlimit(0, pageCount - 1, owner.currentPage())]->knobs()) knob->finishEntry(true);
+    }
     owner.showPage(page);
     timerCallback();
 }
@@ -226,7 +273,15 @@ void DropforgeEditor::timerCallback()
     const auto meters = owner.takeMeters();
     meter.push(meters.peakLeft, meters.peakRight, meters.limiterReductionDb);
     strip.showWheel(owner.wheelPosition());
-    const auto current = juce::jlimit(0, pageCount - 1, owner.currentPage());
+    // The FX page or an instrument page; current is -1 while FX shows.
+    const auto fxShown = owner.currentPage() == fxPageIndex;
+    const auto current = fxShown ? -1 : juce::jlimit(0, pageCount - 1, owner.currentPage());
+    fxTab.setToggleState(fxShown, juce::dontSendNotification);
+    fxTab.setEffectsOn(FxPage::effectsOn(owner.parameterState()));
+    fxTab.setDescription(juce::String("FX page") + (fxShown ? " open. " : ". ") + juce::String(fxTab.effectsOn()) + " effects on.");
+    if (!fxShown && fxPage->isVisible()) for (auto* knob : fxPage->knobs()) knob->finishEntry(true);
+    if (fxPage->isVisible() != fxShown) fxPage->setVisible(fxShown);
+    else if (fxShown) fxPage->refreshPower();
     auto& state = owner.parameterState();
     const auto keys = owner.heldKeys();
     keyboard.show(keys.low, keys.high, keys.bassNote, keys.leadNote, state.getRawParameterValue(ids::bassEnabled)->load() >= 0.5f,
