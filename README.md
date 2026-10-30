@@ -12,7 +12,7 @@ Play chords with one hand and Dropforge turns them into a full part:
 
 The rhythm comes from your MIDI: notes hit instantly, hold while the key is down and stop dead when you let go, so chugs, stabs and chops are as tight as you play them. Velocity sets loudness. There are no envelopes to set up and nothing to configure before it sounds good.
 
-> **Status: early development, no release yet.** Anvil and Furnace now sound as intended, each with four modes (A–D), a Destruction switch, and Mono and Drop for Furnace, and each has its own page in the plugin window: click a tab to open its page, right-click it to switch that instrument on or off. Still to come, in order: the Blade lead, Motion (tempo-synced movement), performance controls (Impact, Glide, mod-wheel Roar and Vibrato), the effects page and presets. Releases will appear on the [Releases page](https://github.com/hugo-cacciatori/dropforge/releases).
+> **Status: early development, no release yet.** Anvil and Furnace now sound as intended, each with four modes (A–D), a Destruction switch, and Mono and Drop for Furnace, and each has its own page in the plugin window: click a tab to open its page, right-click it to switch that instrument on or off. Still to come before the first release: the Blade lead with performance controls (Impact, Glide, mod-wheel Roar and Vibrato), the effects page, and Motion (tempo-synced movement). Presets follow after. Releases will appear on the [Releases page](https://github.com/hugo-cacciatori/dropforge/releases).
 
 ## What you need
 
