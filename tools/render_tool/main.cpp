@@ -131,6 +131,18 @@ Options parse(int argc, char** argv)
         else if (flag == "--reverb-predelay") options.fx.reverb.preDelayMs = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 500.0));
         else if (flag == "--reverb-mix") options.fx.reverbMix = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--space") options.fx.space = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--saturate") options.fx.saturateOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--saturate-drive") options.fx.saturateDriveDb = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 24.0));
+        else if (flag == "--crush") options.fx.finish.crushOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--crush-bits") options.fx.finish.crushBits = static_cast<float>(std::clamp(number(argv[i + 1]), 2.0, 16.0));
+        else if (flag == "--crush-rate") options.fx.finish.crushRateHz = static_cast<float>(std::clamp(number(argv[i + 1]), 1000.0, 24000.0));
+        else if (flag == "--crush-mix") options.fx.finish.crushMix = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--chorus") options.fx.finish.chorusOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--chorus-mix") options.fx.finish.chorusMix = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--eq") options.fx.finish.eqOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--eq-tilt") options.fx.finish.eqTiltDb = static_cast<float>(std::clamp(number(argv[i + 1]), -6.0, 6.0));
+        else if (flag == "--eq-low-cut") options.fx.finish.eqLowCutHz = static_cast<float>(std::clamp(number(argv[i + 1]), 20.0, 300.0));
+        else if (flag == "--eq-high-cut") options.fx.finish.eqHighCutHz = static_cast<float>(std::clamp(number(argv[i + 1]), 2000.0, 20000.0));
         else if (flag == "--duck") options.fx.duck = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--send-anvil") options.fx.sendAnvil = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--send-furnace") options.fx.sendFurnace = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
@@ -453,6 +465,8 @@ int main(int argc, char** argv)
                      "  [--delay 0|1] [--delay-sync 0|1] [--delay-division 1/8] [--delay-feel straight|dotted|triplet]\n"
                      "  [--delay-ms 375] [--delay-feedback 25] [--delay-mix 25] [--delay-mode stereo|pingpong] (percentages 0-100)\n"
                      "  [--reverb 0|1] [--reverb-decay 0.8] [--reverb-predelay 20] [--reverb-mix 20] [--space 50]\n"
+                     "  [--saturate 0|1] [--saturate-drive 6] [--crush 0|1] [--crush-bits 8] [--crush-rate 8000] [--crush-mix 50]\n"
+                     "  [--chorus 0|1] [--chorus-mix 40] [--eq 0|1] [--eq-tilt 0] [--eq-low-cut 20] [--eq-high-cut 20000]\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

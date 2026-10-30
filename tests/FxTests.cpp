@@ -1,6 +1,8 @@
 #include "dsp/FxChain.h"
 #include "plugin/InstrumentCore.h"
+#include <dsp_core/Svf.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -8,7 +10,7 @@
 #include <vector>
 
 // The FX page's chain (SPEC section 8): sends, the ducked Delay and Reverb,
-// Space, tempo, tails.
+// Space, the finishing effects, tempo, tails.
 namespace
 {
 using dropforge::FxChain;
@@ -65,6 +67,17 @@ float largestStep(const std::vector<float>& audio, std::size_t from, std::size_t
     float step = 0.0f;
     for (auto i = std::max<std::size_t>(from, 1); i < to; ++i) step = std::max(step, std::abs(audio[i] - audio[i - 1]));
     return step;
+}
+
+// Energy above against below splitHz, from 200 ms on.
+double tiltDb(const std::vector<float>& audio, double splitHz)
+{
+    dsp_core::Svf above, below;
+    above.set(dsp_core::Svf::Type::highpass, splitHz, rate);
+    below.set(dsp_core::Svf::Type::lowpass, splitHz, rate);
+    std::vector<float> high(audio.size()), low(audio.size());
+    for (std::size_t i = 0; i < audio.size(); ++i) { high[i] = above.next(audio[i]); low[i] = below.next(audio[i]); }
+    return rmsDb(high, 9600, audio.size()) - rmsDb(low, 9600, audio.size());
 }
 std::vector<float> sine(double hz, std::size_t size, float level = 0.3f)
 {
@@ -360,6 +373,171 @@ void spaceAndRouting()
     require(worst < 1e-5, "the reverb and the delay run side by side: the reverb never hears the echoes");
 }
 
+// The finishing effects through the chain alone: dry in, finished out.
+Stereo finished(const FxChain::Settings& s, const std::vector<float>& left, const std::vector<float>& right, int block = 512)
+{
+    FxChain chain;
+    chain.set(s, 120.0);
+    chain.prepare(rate);
+    Stereo out{left, right};
+    std::vector<float> zero(left.size());
+    for (std::size_t at = 0; at < left.size(); at += static_cast<std::size_t>(block))
+    {
+        const auto count = static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(block), left.size() - at));
+        dropforge::LayerTaps taps{zero.data() + at, zero.data() + at, zero.data() + at, zero.data() + at, zero.data() + at};
+        chain.process(out.left.data() + at, out.right.data() + at, taps, dropforge::LayerMask::all, count);
+    }
+    return out;
+}
+double sideDb(const Stereo& audio, std::size_t from, std::size_t to)
+{
+    std::vector<float> side(audio.left.size()), mid(audio.left.size());
+    for (std::size_t i = 0; i < side.size(); ++i) { side[i] = 0.5f * (audio.left[i] - audio.right[i]); mid[i] = 0.5f * (audio.left[i] + audio.right[i]); }
+    return rmsDb(side, from, to) - rmsDb(mid, from, to);
+}
+
+void crushChorusEq()
+{
+    const auto size = static_cast<std::size_t>(rate);
+    // Crush: a 997 Hz tone held at 3 kHz folds a strong alias tone back.
+    {
+        FxChain::Settings s;
+        s.finish.crushOn = true; s.finish.crushBits = 16.0f; s.finish.crushRateHz = 3000.0f; s.finish.crushToneHz = 20000.0f; s.finish.crushMix = 1.0f;
+        const auto tone = sine(997.0, size);
+        const auto out = finished(s, tone, tone);
+        std::vector<float> residual(size);
+        for (std::size_t i = 0; i < size; ++i) residual[i] = out.left[i] - tone[i];
+        const auto grit = rmsDb(residual, 4800, size) - rmsDb(tone, 4800, size);
+        s.finish.crushRateHz = 24000.0f; s.finish.crushBits = 3.0f;
+        const auto coarse = finished(s, tone, tone);
+        for (std::size_t i = 0; i < size; ++i) residual[i] = coarse.left[i] - tone[i];
+        const auto steps = rmsDb(residual, 4800, size) - rmsDb(tone, 4800, size);
+        std::cout << "crush grit_db rate=" << grit << " bits=" << steps << '\n';
+        require(grit > -15.0 && steps > -25.0, "Crush's rate and bits both add audible grit");
+        for (const auto v : out.left) require(std::isfinite(v), "Crush stays finite");
+    }
+    // Chorus: wide above 150 Hz, the low end stays centred.
+    {
+        FxChain::Settings s;
+        s.finish.chorusOn = true; s.finish.chorusMix = 1.0f; s.finish.chorusDepth = 1.0f;
+        const auto low = sine(70.0, size), high = sine(2000.0, size);
+        const auto lowOut = finished(s, low, low), highOut = finished(s, high, high);
+        const auto lowSide = sideDb(lowOut, 9600, size), highSide = sideDb(highOut, 9600, size);
+        std::cout << "chorus side_db 70Hz=" << lowSide << " 2kHz=" << highSide << '\n';
+        require(lowSide < -20.0 && highSide > -15.0, "Chorus widens the mids and highs and keeps the lows mono");
+    }
+    // EQ: the tilt turns lows down and highs up by half its amount each; the
+    // cuts remove what is outside them.
+    {
+        const auto level = [&](double hz, FxChain::Settings s)
+        {
+            const auto tone = sine(hz, size);
+            const auto out = finished(s, tone, tone);
+            return rmsDb(out.left, 9600, size) - rmsDb(tone, 9600, size);
+        };
+        FxChain::Settings tilt;
+        tilt.finish.eqOn = true; tilt.finish.eqTiltDb = 6.0f;
+        const auto lows = level(60.0, tilt), highs = level(12000.0, tilt);
+        FxChain::Settings cuts;
+        cuts.finish.eqOn = true; cuts.finish.eqLowCutHz = 300.0f; cuts.finish.eqHighCutHz = 2000.0f;
+        const auto rumble = level(40.0, cuts), fizz = level(15000.0, cuts);
+        std::cout << "eq tilt+6 60Hz=" << lows << " 12kHz=" << highs << " cuts 40Hz=" << rumble << " 15kHz=" << fizz << '\n';
+        require(std::abs(lows + 3.0) < 0.6 && std::abs(highs - 3.0) < 0.6, "a +6 dB tilt is -3 dB in the lows, +3 dB in the highs");
+        require(rumble < -25.0 && fizz < -25.0, "the EQ's low and high cuts remove rumble and fizz");
+    }
+    // Switching an effect on and off fades: no click, and back to bypass.
+    {
+        FxChain::Settings s;
+        const auto tone = sine(220.0, size);
+        FxChain chain;
+        chain.set(s, 120.0);
+        chain.prepare(rate);
+        Stereo out{tone, tone};
+        std::vector<float> zero(size);
+        const auto play = [&](std::size_t from, std::size_t to)
+        {
+            dropforge::LayerTaps taps{zero.data(), zero.data(), zero.data(), zero.data(), zero.data()};
+            for (auto at = from; at < to; at += 512)
+                chain.process(out.left.data() + at, out.right.data() + at, taps, dropforge::LayerMask::all, static_cast<int>(std::min<std::size_t>(512, to - at)));
+        };
+        play(0, 12000);
+        s.finish.eqOn = true; s.finish.eqTiltDb = -6.0f; s.finish.eqHighCutHz = 3000.0f;
+        chain.set(s, 120.0);
+        play(12000, 30000);
+        s.finish.eqOn = false;
+        chain.set(s, 120.0);
+        play(30000, size);
+        // Against the louder of the plain and the equalised tone (the tilt
+        // lifts 220 Hz by about 2 dB).
+        const auto steady = std::max(largestStep(out.left, 2000, 12000), largestStep(out.left, 18000, 30000));
+        const auto switching = std::max(largestStep(out.left, 12000, 15000), largestStep(out.left, 30000, 33000));
+        std::cout << "eq switch step=" << switching << " steady=" << steady << '\n';
+        require(switching <= 1.1f * steady, "switching an effect fades without a click");
+        require(!chain.active() && out.left[size - 1] == tone[size - 1], "off and faded, the chain is bypassed again");
+    }
+}
+
+// Saturate through the whole instrument: thicker, about as loud, never over
+// the ceiling, and fading in and out without a click.
+void saturate()
+{
+    const auto play = [](bool on, float drive, int toggleAt = -1)
+    {
+        dropforge::InstrumentCore core;
+        dropforge::FxChain::Settings fx;
+        fx.saturateOn = on; fx.saturateDriveDb = drive;
+        core.setFx(fx, 120.0);
+        core.prepare(rate);
+        const std::uint8_t on1[][3]{{0x90, 40, 120}, {0x90, 47, 120}, {0x90, 52, 120}, {0x90, 55, 120}};
+        for (const auto& message : on1) core.midi(message, 3);
+        std::vector<float> left(72000), right(72000);
+        for (int at = 0; at < 72000; at += 480)
+        {
+            if (at == toggleAt) { fx.saturateOn = !fx.saturateOn; core.setFx(fx, 120.0); }
+            core.process(left.data() + at, right.data() + at, 480);
+        }
+        return Stereo{left, right};
+    };
+    const auto dry = play(false, 6.0f);
+    const auto dryLevel = rmsDb(dry.left, 9600, 72000);
+    // Harmonics: a 200 Hz tone at -12 dBFS through the master alone; the
+    // energy above 600 Hz is what the drive adds.
+    const auto harmonics = [](bool on, float drive)
+    {
+        dropforge::Master master;
+        master.setSaturate(on, drive, 1.0f);
+        master.prepare(rate);
+        auto left = sine(200.0, 48000, 0.25f), right = left;
+        master.process(left.data(), right.data(), 48000);
+        // 24 dB/oct above 500 Hz: the 200 Hz tone itself falls 32 dB, its
+        // third and higher harmonics pass.
+        std::array<dsp_core::Svf, 2> above;
+        for (auto& f : above) f.set(dsp_core::Svf::Type::highpass, 500.0, rate);
+        std::vector<float> high(left.size());
+        for (std::size_t i = 0; i < left.size(); ++i) high[i] = above[1].next(above[0].next(left[i]));
+        return rmsDb(high, 9600, left.size()) - rmsDb(left, 9600, left.size());
+    };
+    const auto clean = harmonics(false, 0.0f);
+    double previous = 0.0;
+    for (const float drive : {0.0f, 6.0f, 12.0f, 24.0f})
+    {
+        const auto wet = play(true, drive);
+        float peak = 0.0f;
+        for (const auto v : wet.left) { require(std::isfinite(v), "Saturate stays finite"); peak = std::max(peak, std::abs(v)); }
+        const auto level = rmsDb(wet.left, 9600, 72000) - dryLevel, brighter = harmonics(true, drive) - clean;
+        std::cout << "saturate drive=" << drive << " level_db=" << level << " brighter_db=" << brighter << " peak=" << peak << '\n';
+        require(std::abs(level) < 2.0, "Saturate is loudness-compensated (within 2 dB at any drive)");
+        require(peak <= 0.8913f, "Saturate stays under the -1 dBFS ceiling");
+        if (drive >= 12.0f) require(brighter > 3.0 && brighter > previous, "more drive adds more harmonics");
+        previous = brighter;
+    }
+    const auto toggled = play(false, 12.0f, 24000);
+    const auto steady = largestStep(toggled.left, 9600, 24000);
+    const auto change = largestStep(toggled.left, 24000, 27000);
+    std::cout << "saturate switch step=" << change << " steady=" << steady << '\n';
+    require(change <= 1.25f * std::max(steady, largestStep(toggled.left, 40000, 72000)), "Saturate fades in without a click");
+}
+
 void blockInvariance()
 {
     const auto render = [](int block)
@@ -367,6 +545,7 @@ void blockInvariance()
         auto s = echoOnly();
         s.delayFeedback = 0.5f; s.duck = 0.5f; s.delayPingPong = true; s.delayWidth = 0.7f;
         s.reverbOn = true; s.reverb.modulation = 0.8f; s.reverb.preDelayMs = 37.0f;
+        s.finish.crushOn = s.finish.chorusOn = s.finish.eqOn = true; s.finish.eqTiltDb = 3.0f;
         FxChain chain;
         chain.set(s, 128.0);
         chain.prepare(rate);
@@ -424,6 +603,8 @@ int main()
     retimeAndTails();
     reverbRoom();
     spaceAndRouting();
+    crushChorusEq();
+    saturate();
     blockInvariance();
     instrument();
     std::cout << "fx passed\n";

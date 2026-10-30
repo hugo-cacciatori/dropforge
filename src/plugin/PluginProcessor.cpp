@@ -135,6 +135,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     skewed(fx::fxReverbLowCut, "Reverb Low Cut", 20.0f, 2000.0f, 250.0f, 250.0f, "Hz");
     skewed(fx::fxReverbHighCut, "Reverb High Cut", 1000.0f, 20000.0f, 6000.0f, 7000.0f, "Hz");
     percent(fx::spaceAmount, "Space", 100.0f, 50.0f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxSaturateOn, 1}, "Saturate", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{fx::fxSaturateDrive, 1}, "Saturate Drive",
+        juce::NormalisableRange<float>{0.0f, 24.0f}, 6.0f, juce::AudioParameterFloatAttributes{}.withLabel("dB")));
+    percent(fx::fxSaturateMix, "Saturate Mix", 100.0f, 100.0f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxCrushOn, 1}, "Crush", false));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{fx::fxCrushBits, 1}, "Crush Bits",
+        juce::NormalisableRange<float>{2.0f, 16.0f}, 8.0f, juce::AudioParameterFloatAttributes{}.withLabel("bits")));
+    skewed(fx::fxCrushRate, "Crush Rate", 1000.0f, 24000.0f, 6000.0f, 8000.0f, "Hz");
+    skewed(fx::fxCrushTone, "Crush Tone", 1000.0f, 20000.0f, 6000.0f, 8000.0f, "Hz");
+    percent(fx::fxCrushMix, "Crush Mix", 100.0f, 50.0f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxChorusOn, 1}, "Chorus", false));
+    skewed(fx::fxChorusRate, "Chorus Rate", 0.05f, 5.0f, 0.6f, 0.6f, "Hz");
+    percent(fx::fxChorusDepth, "Chorus Depth", 100.0f, 50.0f);
+    percent(fx::fxChorusMix, "Chorus Mix", 100.0f, 40.0f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxEqOn, 1}, "EQ", false));
+    skewed(fx::fxEqLowCut, "EQ Low Cut", 20.0f, 300.0f, 80.0f, 20.0f, "Hz");
+    skewed(fx::fxEqHighCut, "EQ High Cut", 2000.0f, 20000.0f, 8000.0f, 20000.0f, "Hz");
+    layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{fx::fxEqTilt, 1}, "EQ Tilt",
+        juce::NormalisableRange<float>{-6.0f, 6.0f}, 0.0f, juce::AudioParameterFloatAttributes{}.withLabel("dB")));
     return layout;
 }
 
@@ -168,12 +187,15 @@ DropforgeProcessor::DropforgeProcessor()
     wheelAmountValue = state.getRawParameterValue(dropforge::parameters::wheelAmount);
     {
         namespace fx = dropforge::parameters;
-        const std::array<const char*, 27> ids{fx::fxSendAnvil, fx::fxSendFurnace, fx::fxSendBlade, fx::fxDuck, fx::fxDelayOn, fx::fxDelaySync,
+        const std::array<const char*, 43> ids{fx::fxSendAnvil, fx::fxSendFurnace, fx::fxSendBlade, fx::fxDuck, fx::fxDelayOn, fx::fxDelaySync,
                                               fx::fxDelayDivision, fx::fxDelayFeel, fx::fxDelayMs, fx::fxDelayFeedback, fx::fxDelayMode,
                                               fx::fxDelayWidth, fx::fxDelayMix, fx::fxDelayLowCut, fx::fxDelayHighCut,
                                               fx::fxReverbOn, fx::fxReverbDecay, fx::fxReverbPreDelay, fx::fxReverbSize, fx::fxReverbDiffusion,
                                               fx::fxReverbDamping, fx::fxReverbModulation, fx::fxReverbWidth, fx::fxReverbMix,
-                                              fx::fxReverbLowCut, fx::fxReverbHighCut, fx::spaceAmount};
+                                              fx::fxReverbLowCut, fx::fxReverbHighCut, fx::spaceAmount,
+                                              fx::fxSaturateOn, fx::fxSaturateDrive, fx::fxSaturateMix, fx::fxCrushOn, fx::fxCrushBits,
+                                              fx::fxCrushRate, fx::fxCrushTone, fx::fxCrushMix, fx::fxChorusOn, fx::fxChorusRate,
+                                              fx::fxChorusDepth, fx::fxChorusMix, fx::fxEqOn, fx::fxEqLowCut, fx::fxEqHighCut, fx::fxEqTilt};
         for (std::size_t i = 0; i < ids.size(); ++i) fxValues[i] = state.getRawParameterValue(ids[i]);
     }
     core.setLayersEnabled(true, true);
@@ -290,6 +312,23 @@ void DropforgeProcessor::applyFx() noexcept
                        value(21, 30.0f) / 100.0f, value(22, 100.0f) / 100.0f, value(24, 250.0f), value(25, 7000.0f)};
     settings.reverbMix = value(23, 20.0f) / 100.0f;
     settings.space = value(26, 50.0f) / 100.0f;
+    settings.saturateOn = value(27, 0.0f) >= 0.5f;
+    settings.saturateDriveDb = value(28, 6.0f);
+    settings.saturateMix = value(29, 100.0f) / 100.0f;
+    auto& finish = settings.finish;
+    finish.crushOn = value(30, 0.0f) >= 0.5f;
+    finish.crushBits = value(31, 8.0f);
+    finish.crushRateHz = value(32, 8000.0f);
+    finish.crushToneHz = value(33, 8000.0f);
+    finish.crushMix = value(34, 50.0f) / 100.0f;
+    finish.chorusOn = value(35, 0.0f) >= 0.5f;
+    finish.chorusRateHz = value(36, 0.6f);
+    finish.chorusDepth = value(37, 50.0f) / 100.0f;
+    finish.chorusMix = value(38, 40.0f) / 100.0f;
+    finish.eqOn = value(39, 0.0f) >= 0.5f;
+    finish.eqLowCutHz = value(40, 20.0f);
+    finish.eqHighCutHz = value(41, 20000.0f);
+    finish.eqTiltDb = value(42, 0.0f);
     double bpm = 120.0;
     if (auto* head = getPlayHead())
         if (const auto position = head->getPosition())

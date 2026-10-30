@@ -85,7 +85,7 @@ private:
     std::atomic<float>* wheelAmountValue = nullptr;
     std::atomic<float> wheelNow{0.0f};
     // The FX page's values, read every block (SPEC section 8).
-    std::array<std::atomic<float>*, 27> fxValues{};
+    std::array<std::atomic<float>*, 43> fxValues{};
     void applyFx() noexcept;
     void applyModes() noexcept;
     double preparedRate = 44100.0;

@@ -82,10 +82,12 @@ int main(int argc, char** argv)
     {
         dropforge::Engine engine;
         dropforge::Master master; // the full instrument: voices plus master chain
-        // --fx 1: the Delay and Reverb on at their defaults, every send at its default.
+        // --fx 1: every FX-page effect on at its defaults (Saturate in the master).
         dropforge::FxChain effects;
         dropforge::FxChain::Settings fxSettings;
         fxSettings.delayOn = fxSettings.reverbOn = fx;
+        fxSettings.finish.crushOn = fxSettings.finish.chorusOn = fxSettings.finish.eqOn = fx;
+        master.setSaturate(fx, fxSettings.saturateDriveDb, fxSettings.saturateMix);
         effects.set(fxSettings, 120.0);
         effects.prepare(rate);
         engine.setLayersEnabled(true, true);

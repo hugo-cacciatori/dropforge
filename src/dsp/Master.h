@@ -12,7 +12,9 @@ namespace dropforge
 // The master after the layer buses (SPEC section 4): a fixed trim that sets
 // the mix-ready loudness, a gentle glue compressor, a 4x oversampled soft
 // clipper that rounds off stab transients, and a look-ahead limiter that
-// holds every sample peak at or under -1 dBFS. Output and meters follow in
+// holds every sample peak at or under -1 dBFS. The FX page's Saturate runs
+// inside the clipper's 4x stage, before the clip: tape-like warmth on the
+// whole mix with no added latency. Output and meters follow in
 // InstrumentCore. At default settings only peaks are touched.
 class Master
 {
@@ -34,6 +36,8 @@ public:
         glue.prepare({-12.0f, 2.0f, 6.0f, 0.010, 0.150}, sampleRate);
         for (auto& stage : clipper) stage.prepare();
         limiter.prepare(ceiling, sampleRate);
+        fadeStep = static_cast<float>(1.0 / std::ceil(sampleRate * 0.030));
+        smoothing = static_cast<float>(1.0 - std::exp(-1.0 / (0.005 * sampleRate)));
         reset();
     }
     void reset() noexcept
@@ -42,6 +46,17 @@ public:
         for (auto& stage : clipper) stage.reset();
         limiter.reset();
         meters = {};
+        saturateLevel = saturateOn ? saturateMix : 0.0f;
+        saturateGain = saturateTarget;
+        saturateBalance = balanceFor(saturateGain);
+    }
+    // Saturate (SPEC section 8): drive 0-24 dB, mix 0-1; switching on or
+    // off fades the mix over 30 ms.
+    void setSaturate(bool on, float driveDb, float mix) noexcept
+    {
+        saturateOn = on;
+        saturateMix = std::isfinite(mix) ? std::clamp(mix, 0.0f, 1.0f) : 1.0f;
+        saturateTarget = std::pow(10.0f, (std::isfinite(driveDb) ? std::clamp(driveDb, 0.0f, 24.0f) : 6.0f) / 20.0f);
     }
     void process(float* left, float* right, int samples) noexcept
     {
@@ -51,8 +66,29 @@ public:
             auto l = trim * left[i], r = trim * right[i];
             glue.process(l, r);
             meters.glueReductionDb = std::min(meters.glueReductionDb, glue.gainReductionDb());
-            l = clipper[0].next(l, softClip);
-            r = clipper[1].next(r, softClip);
+            const auto mixTarget = saturateOn ? saturateMix : 0.0f;
+            if (saturateLevel != mixTarget || saturateLevel > 0.0f)
+            {
+                saturateLevel = mixTarget > saturateLevel ? std::min(mixTarget, saturateLevel + fadeStep)
+                                                          : std::max(mixTarget, saturateLevel - fadeStep);
+                if (saturateGain != saturateTarget)
+                {
+                    saturateGain += smoothing * (saturateTarget - saturateGain);
+                    if (std::abs(saturateGain - saturateTarget) < 1e-5f) saturateGain = saturateTarget;
+                    saturateBalance = balanceFor(saturateGain);
+                }
+                const auto shape = [mix = saturateLevel, gain = saturateGain, balance = saturateBalance](float x) noexcept
+                {
+                    return softClip(x + mix * (balance * (std::tanh(gain * x + saturateBias) - biasOffset) - x));
+                };
+                l = clipper[0].next(l, shape);
+                r = clipper[1].next(r, shape);
+            }
+            else
+            {
+                l = clipper[0].next(l, softClip);
+                r = clipper[1].next(r, softClip);
+            }
             limiter.process(l, r);
             meters.limiterReductionDb = std::min(meters.limiterReductionDb, limiter.gainReductionDb());
             left[i] = l;
@@ -76,6 +112,19 @@ private:
         return x < 0.0f ? -shaped : shaped;
     }
 
+    // Saturate's curve: a slightly biased tanh (the bias adds the even
+    // harmonics of tape and tubes), rescaled so a -18 dBFS signal (the
+    // mix's typical level) comes out at -18 dBFS whatever the drive: more
+    // drive thickens and compresses the mix instead of making it louder.
+    static constexpr float saturateBias = 0.1f, saturateReference = 0.125f;
+    static inline const float biasOffset = std::tanh(saturateBias);
+    static float balanceFor(float gain) noexcept
+    {
+        return saturateReference / (std::tanh(gain * saturateReference + saturateBias) - biasOffset);
+    }
+    bool saturateOn = false;
+    float saturateMix = 1.0f, saturateTarget = 2.0f, saturateGain = 2.0f, saturateBalance = 1.0f, saturateLevel = 0.0f;
+    float fadeStep = 0.001f, smoothing = 0.004f;
     dsp_core::GlueCompressor glue;
     std::array<dsp_core::Oversampler4xFloat, 2> clipper;
     dsp_core::PeakLimiter limiter;

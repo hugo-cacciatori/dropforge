@@ -80,7 +80,11 @@ public:
     }
     // The FX page (SPEC section 8) at the host's tempo (BPM; anything
     // outside 20-300, such as no host tempo, plays at 120).
-    void setFx(const FxChain::Settings& settings, double bpm) noexcept { fx.set(settings, bpm); }
+    void setFx(const FxChain::Settings& settings, double bpm) noexcept
+    {
+        fx.set(settings, bpm);
+        master.setSaturate(settings.saturateOn, settings.saturateDriveDb, settings.saturateMix);
+    }
     // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
     void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
     // Performance (SPEC section 3): Bend Range in semitones; Glide on/off and

@@ -5,6 +5,7 @@
 #include <cmath>
 #include "Engine.h"
 #include "FxDelay.h"
+#include "FxFinish.h"
 #include "FxReverb.h"
 
 namespace dropforge
@@ -37,6 +38,10 @@ public:
         // Space (0-1): both wets at once; 0.5 plays them as set, 0 dry,
         // 1 doubles them.
         float space = 0.5f;
+        // Crush, Chorus and EQ run here; Saturate in the master (Master.h).
+        FxFinish::Settings finish{};
+        bool saturateOn = false;
+        float saturateDriveDb = 6.0f, saturateMix = 1.0f;
     };
     // The synced or free delay time in seconds at this tempo.
     static double delaySeconds(const Settings& settings, double bpm) noexcept
@@ -55,6 +60,7 @@ public:
         rate = sampleRate;
         delay.prepare(rate);
         reverb.prepare(rate);
+        finish.prepare(rate);
         fadeStep = static_cast<float>(1.0 / std::ceil(rate * 0.030));
         smoothing = static_cast<float>(1.0 - std::exp(-1.0 / (0.005 * rate)));
         // Ducking: a 1 ms attack so a chop pulls the echoes down at once, a
@@ -69,6 +75,7 @@ public:
     {
         delay.reset();
         reverb.reset();
+        finish.reset();
         delayInput = settings.delayOn ? 1.0f : 0.0f;
         reverbInput = settings.reverbOn ? 1.0f : 0.0f;
         reverbMix = settings.reverbMix;
@@ -86,9 +93,10 @@ public:
         delay.set({delaySeconds(settings, bpm), settings.delayFeedback, settings.delayWidth, settings.delayLowCutHz,
                    settings.delayHighCutHz, settings.delayPingPong});
         reverb.set(settings.reverb);
+        finish.set(settings.finish);
     }
     // Something to do: an effect on, or a tail still draining.
-    bool active() const noexcept { return settings.delayOn || settings.reverbOn || running; }
+    bool active() const noexcept { return returnsActive() || finish.active(); }
 
     // Adds the returns to the dry mix in left/right. The taps hold each
     // instrument's signal for the same samples; mask says which instruments
@@ -96,14 +104,15 @@ public:
     void process(float* left, float* right, const LayerTaps& taps, LayerMask mask, int count) noexcept
     {
         if (!active()) return;
-        running = true;
+        const auto returns = returnsActive();
+        running = running || returns;
         const auto bits = static_cast<unsigned>(mask);
         const auto target = settings.delayOn ? 1.0f : 0.0f, reverbTarget = settings.reverbOn ? 1.0f : 0.0f;
         const auto fade = [this](float& value, float goal) noexcept
         {
             value = goal > value ? std::min(goal, value + fadeStep) : std::max(goal, value - fadeStep);
         };
-        for (int i = 0; i < count; ++i)
+        for (int i = 0; i < count && returns; ++i)
         {
             fade(delayInput, target);
             fade(reverbInput, reverbTarget);
@@ -130,13 +139,21 @@ public:
         }
         // Off, faded and drained: back to the bypass, with the lines cleared
         // so the next start is exactly like the first.
-        if (!settings.delayOn && !settings.reverbOn && delayInput == 0.0f && reverbInput == 0.0f && delay.silent() && reverb.silent())
-            reset();
+        if (returns && !settings.delayOn && !settings.reverbOn && delayInput == 0.0f && reverbInput == 0.0f && delay.silent() && reverb.silent())
+        {
+            delay.reset();
+            reverb.reset();
+            running = false;
+        }
+        if (finish.active())
+            for (int i = 0; i < count; ++i) finish.process(left[i], right[i]);
     }
 
 private:
+    bool returnsActive() const noexcept { return settings.delayOn || settings.reverbOn || running; }
     FxDelay delay;
     FxReverb reverb;
+    FxFinish finish;
     Settings settings{};
     std::array<float, 3> sends{};
     double rate = 48000.0, bpm = 120.0;
