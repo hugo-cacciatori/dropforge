@@ -84,6 +84,41 @@ def phrase_line():
     return 110, 8.0, rows
 
 
+def wheel_ramp(start, end, from_value, to_value, step=1 / 32):
+    """Mod wheel (CC1) moves from from_value to to_value between two beats."""
+    count = max(1, round((end - start) / step))
+    return [(start + (end - start) * i / count, 1, round(from_value + (to_value - from_value) * i / count))
+            for i in range(count + 1)]
+
+
+def phrase_wub():
+    """The mod wheel as a dubstep wub: an E power chord held under the hand
+    rocking the wheel in eighth notes, then quarter-note triplets, a slow
+    sweep up, a hold and a slow return. Anvil E1 under Furnace E2/B2/E3."""
+    rows = [(0.0, 16.0, n) for n in (40, 47, 52)]
+    controls = []
+    for i in range(8):                       # eighth-note wubs over two bars
+        start = i * 0.5
+        controls += wheel_ramp(start, start + 0.25, 0, 127) + wheel_ramp(start + 0.25, start + 0.5, 127, 0)
+    for i in range(6):                       # quarter-note triplets
+        start = 4.0 + i * 2 / 3
+        controls += wheel_ramp(start, start + 1 / 3, 0, 127) + wheel_ramp(start + 1 / 3, start + 2 / 3, 127, 0)
+    controls += wheel_ramp(8.0, 12.0, 0, 127) + wheel_ramp(14.0, 16.0, 127, 0)
+    return 140, 16.0, rows, controls
+
+
+def phrase_sing():
+    """A slow lead over held chords: each long note starts plain and the
+    wheel rises through it, the way a singer adds vibrato (or a growl)."""
+    rows = [(0.0, 8.0, n) for n in (40, 47, 52)] + [(8.0, 8.0, n) for n in (36, 43, 48)]
+    melody = [(0.0, 4.0, 71), (4.0, 4.0, 69), (8.0, 4.0, 67), (12.0, 4.0, 64)]
+    rows += melody
+    controls = []
+    for start, length, _ in melody:
+        controls += wheel_ramp(start, start + 0.02, 0, 0) + wheel_ramp(start + 1.0, start + length - 0.5, 0, 127)
+    return 90, 16.0, rows, controls
+
+
 PHRASES = {
     'chords': phrase_chords,
     'breakdown': phrase_breakdown,
@@ -91,6 +126,8 @@ PHRASES = {
     'held': phrase_held,
     'anthem': phrase_anthem,
     'line': phrase_line,
+    'wub': phrase_wub,
+    'sing': phrase_sing,
 }
 
 
@@ -103,8 +140,10 @@ def variable_length(value):
     return bytes(data)
 
 
-def write_midi(path, bpm, length_beats, rows, velocity=127):
+def write_midi(path, bpm, length_beats, rows, velocity=127, controls=()):
     events = []  # (tick, order, bytes): note-offs sort before note-ons at equal ticks
+    for beat, number, value in controls:     # controller changes, channel 1
+        events.append((round(beat * TICKS), 0, bytes([0xB0, number, max(0, min(127, value))])))
     for start, duration, note in rows:
         on = round(start * TICKS)
         off = round((start + duration) * TICKS)
@@ -130,8 +169,8 @@ def main():
     folder = Path(sys.argv[1])
     folder.mkdir(parents=True, exist_ok=True)
     for name, build in PHRASES.items():
-        bpm, length, rows = build()
-        write_midi(folder / f'{name}.mid', bpm, length, rows)
+        bpm, length, rows, *extra = build()
+        write_midi(folder / f'{name}.mid', bpm, length, rows, controls=extra[0] if extra else ())
         print(f'{name}.mid  {bpm} BPM  {length:g} beats  {len(rows)} notes')
     return 0
 

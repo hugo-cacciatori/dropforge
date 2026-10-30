@@ -96,6 +96,8 @@ public:
         engine.setBassParameters(splitHz, drive);
         engine.setRhythmParameters(drive);
     }
+    // Diagnostic Roar depth for listening rounds; the plugin never calls it.
+    void setRoarScale(float scale) noexcept { engine.setRoarScale(scale); }
     void panic() noexcept
     {
         for (int channel = 1; channel <= 16; ++channel)

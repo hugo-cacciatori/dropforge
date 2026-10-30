@@ -24,7 +24,7 @@ struct Options
     int bladePortamento = 0, bladeOctave = 0, bendRange = 2;
     bool glide = false, impact = false;
     int wheelMode = 0;
-    float wheelAmount = 0.0f;
+    float wheelAmount = 0.0f, roarScale = 1.0f;
     float glideMs = 80.0f;
     float bladePortamentoMs = 60.0f;
     dropforge::LayerMask mask = dropforge::LayerMask::all;
@@ -96,6 +96,12 @@ Options parse(int argc, char** argv)
             const std::string mode = argv[i + 1];
             if (mode != "roar" && mode != "vibrato") throw std::runtime_error("Wheel mode must be roar or vibrato");
             options.wheelMode = mode == "vibrato" ? 1 : 0;
+        }
+        else if (flag == "--roar-scale")
+        {
+            const auto scale = number(argv[i + 1]);
+            if (scale < 0.0 || scale > 2.0) throw std::runtime_error("Roar scale must be 0 to 2");
+            options.roarScale = static_cast<float>(scale);
         }
         else if (flag == "--wheel-amount")
         {
@@ -270,6 +276,7 @@ void render(const Options& options)
     core.setLeadPlaying(options.bladePortamento, options.bladePortamentoMs, options.bladeOctave);
     core.setPerformance(options.bendRange, options.glide, options.glideMs, options.impact);
     core.setWheel(options.wheelMode, options.wheelAmount);
+    core.setRoarScale(options.roarScale);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -343,6 +350,7 @@ void render(const Options& options)
     metrics->setProperty("impact", options.impact);
     metrics->setProperty("wheel_mode", options.wheelMode == 1 ? "vibrato" : "roar");
     metrics->setProperty("wheel_amount", options.wheelAmount);
+    metrics->setProperty("roar_scale", options.roarScale);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -385,6 +393,7 @@ int main(int argc, char** argv)
                      "  [--blade-porta off|legato|always] [--blade-porta-ms 60] [--blade-octave -1|0|1]\n"
                      "  [--bend-range 2|5|7|12|24] [--glide 0|1] [--glide-ms 80] [--impact 0|1]\n"
                      "  [--wheel-mode roar|vibrato] [--wheel-amount 0] (MIDI CC1 also moves the wheel)\n"
+                     "  [--roar-scale 1] (diagnostic Roar depth for listening rounds, 0 to 2)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

@@ -543,7 +543,7 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     const auto increment = vibratoHz / rate;
     for (std::size_t i = 0; i < samples; ++i)
     {
-        roarBlock[i] = static_cast<float>(roarDepth.next());
+        roarBlock[i] = static_cast<float>(roarDepth.next()) * roarScale;
         const auto depth = vibratoDepth.next();
         if (depth > 0.0)
         {

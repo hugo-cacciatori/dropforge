@@ -135,6 +135,9 @@ public:
     void resetWheel() noexcept;
     float wheelPosition() const noexcept { return wheelTarget; }
     static constexpr double vibratoHz = 5.0, vibratoCents = 25.0;
+    // Diagnostic, for listening rounds only (the plugin keeps 1): scales
+    // Roar's depth, so 1.3 sweeps further and harder than the built wheel.
+    void setRoarScale(float scale) noexcept { roarScale = std::isfinite(scale) ? std::clamp(scale, 0.0f, 2.0f) : 1.0f; }
     // Test hook: the pitch Anvil's voice sounds now, before bend.
     double bassPitch() const noexcept { return bassVoices[bassSlot].currentPitch(); }
     void noteOn(int channel, int note, int velocity) noexcept;
@@ -221,7 +224,7 @@ private:
     bool impactOn = false, striking = false;
     int strikeVelocity(int velocity) const noexcept { return impactOn && striking ? velocity : 0; }
     WheelMode wheelMode = WheelMode::roar;
-    float wheelSaved = 0.0f, wheelTarget = 0.0f;
+    float wheelSaved = 0.0f, wheelTarget = 0.0f, roarScale = 1.0f;
     double roarGoal = 0.0, vibratoGoal = 0.0, vibratoPhase = 0.0;
     dsp_core::LinearRamp roarDepth, vibratoDepth;
     void aimWheel(int samples) noexcept;
