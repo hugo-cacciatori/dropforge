@@ -25,6 +25,8 @@ struct Options
     bool glide = false, impact = false;
     int wheelMode = 0;
     float wheelAmount = 0.0f, roarScale = 1.0f;
+    dropforge::FxChain::Settings fx;
+    double bpm = 0.0; // 0: the MIDI file's first tempo (120 without one)
     float glideMs = 80.0f;
     float bladePortamentoMs = 60.0f;
     dropforge::LayerMask mask = dropforge::LayerMask::all;
@@ -97,6 +99,37 @@ Options parse(int argc, char** argv)
             if (mode != "roar" && mode != "vibrato") throw std::runtime_error("Wheel mode must be roar or vibrato");
             options.wheelMode = mode == "vibrato" ? 1 : 0;
         }
+        else if (flag == "--bpm") options.bpm = number(argv[i + 1]);
+        else if (flag == "--delay") options.fx.delayOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--delay-sync") options.fx.delaySync = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--delay-division")
+        {
+            const std::string text = argv[i + 1];
+            const std::array<std::string, 8> names{"1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1bar", "2bars"};
+            const auto found = std::find(names.begin(), names.end(), text);
+            if (found == names.end()) throw std::runtime_error("Delay division must be 1/64, 1/32, 1/16, 1/8, 1/4, 1/2, 1bar or 2bars");
+            options.fx.delayDivision = static_cast<int>(found - names.begin());
+        }
+        else if (flag == "--delay-feel")
+        {
+            const std::string feel = argv[i + 1];
+            if (feel != "straight" && feel != "dotted" && feel != "triplet") throw std::runtime_error("Delay feel must be straight, dotted or triplet");
+            options.fx.delayFeel = feel == "dotted" ? dropforge::FxChain::Feel::dotted : feel == "triplet" ? dropforge::FxChain::Feel::triplet
+                                                                                       : dropforge::FxChain::Feel::straight;
+        }
+        else if (flag == "--delay-ms") options.fx.delayMs = static_cast<float>(std::clamp(number(argv[i + 1]), 1.0, 2000.0));
+        else if (flag == "--delay-feedback") options.fx.delayFeedback = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 95.0) / 100.0);
+        else if (flag == "--delay-mix") options.fx.delayMix = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--delay-mode")
+        {
+            const std::string mode = argv[i + 1];
+            if (mode != "stereo" && mode != "pingpong") throw std::runtime_error("Delay mode must be stereo or pingpong");
+            options.fx.delayPingPong = mode == "pingpong";
+        }
+        else if (flag == "--duck") options.fx.duck = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--send-anvil") options.fx.sendAnvil = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--send-furnace") options.fx.sendFurnace = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--send-blade") options.fx.sendBlade = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--roar-scale")
         {
             const auto scale = number(argv[i + 1]);
@@ -233,6 +266,20 @@ void render(const Options& options)
             for (auto* event : *midi.getTrack(track))
                 event->message.setTimeStamp(event->message.getTimeStamp() / ticksPerSecond);
     }
+    // The phrase's own tempo drives synced FX unless --bpm overrides it.
+    auto bpm = options.bpm;
+    if (bpm <= 0.0)
+    {
+        bpm = 120.0;
+        double earliest = 1e300;
+        for (int track = 0; track < midi.getNumTracks(); ++track)
+            for (const auto* event : *midi.getTrack(track))
+                if (event->message.isTempoMetaEvent() && event->message.getTimeStamp() < earliest)
+                {
+                    earliest = event->message.getTimeStamp();
+                    bpm = 60.0 / event->message.getTempoSecondsPerQuarterNote();
+                }
+    }
     const auto duration = midi.getLastTimestamp();
     // Bound memory/disk use and keep well below RIFF's 4 GiB size limit at 192 kHz.
     if (!std::isfinite(duration) || duration < 0.0 || duration + options.tail > 600.0)
@@ -277,6 +324,7 @@ void render(const Options& options)
     core.setPerformance(options.bendRange, options.glide, options.glideMs, options.impact);
     core.setWheel(options.wheelMode, options.wheelAmount);
     core.setRoarScale(options.roarScale);
+    core.setFx(options.fx, bpm);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -351,6 +399,7 @@ void render(const Options& options)
     metrics->setProperty("wheel_mode", options.wheelMode == 1 ? "vibrato" : "roar");
     metrics->setProperty("wheel_amount", options.wheelAmount);
     metrics->setProperty("roar_scale", options.roarScale);
+    metrics->setProperty("fx_delay", options.fx.delayOn);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -394,6 +443,9 @@ int main(int argc, char** argv)
                      "  [--bend-range 2|5|7|12|24] [--glide 0|1] [--glide-ms 80] [--impact 0|1]\n"
                      "  [--wheel-mode roar|vibrato] [--wheel-amount 0] (MIDI CC1 also moves the wheel)\n"
                      "  [--roar-scale 1] (diagnostic Roar depth for listening rounds, 0 to 2)\n"
+                     "  [--bpm 120] (default: the MIDI file's tempo) [--send-anvil 0] [--send-furnace 100] [--send-blade 60] [--duck 50]\n"
+                     "  [--delay 0|1] [--delay-sync 0|1] [--delay-division 1/8] [--delay-feel straight|dotted|triplet]\n"
+                     "  [--delay-ms 375] [--delay-feedback 25] [--delay-mix 25] [--delay-mode stereo|pingpong] (percentages 0-100)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }
