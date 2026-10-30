@@ -27,4 +27,8 @@ inline constexpr auto leadDestroy = "lead_destroy";
 inline constexpr auto leadPortamento = "lead_porta";
 inline constexpr auto leadPortamentoMs = "lead_porta_ms";
 inline constexpr auto leadOctave = "lead_octave";
+// Performance (SPEC section 3).
+inline constexpr auto bendRange = "bend_range";
+inline constexpr auto glideOn = "glide_on";
+inline constexpr auto glideMs = "glide_ms";
 }

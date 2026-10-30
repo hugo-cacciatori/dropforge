@@ -109,6 +109,7 @@ public:
         rich.reset();
         growl.start(); round.start(); reese.start();
         frequency = hz;
+        sliding = false;
         // Initialize even the FIR pre-ringing with the new pitch. Otherwise a
         // fully suspended voice could depend on its previous notch setting.
         for (auto& path : gritPaths) path.setPitch(hz, rate);
@@ -119,6 +120,17 @@ public:
         pendingAttack = true;
     }
     void stop() noexcept { envelope.stop(); }
+    // Glide (SPEC section 3): a new pitch without a new attack, sliding
+    // evenly in pitch over slideSamples from the pitch sounding now.
+    void legato(double hz, int slideSamples) noexcept
+    {
+        if (slideSamples <= 0) { frequency = hz; sliding = false; return; }
+        slide.reset(std::log2(frequency));
+        slide.setTarget(std::log2(hz), slideSamples);
+        slideTarget = hz;
+        sliding = true;
+    }
+    double currentPitch() const noexcept { return frequency; }
     // Still producing sound: held, releasing, or draining its aligned delay.
     bool sounding() const noexcept { return envelope.active() || pendingAttack || lastOutput != 0.0f; }
     void retargetVelocity(int noteVelocity) noexcept
@@ -142,6 +154,12 @@ public:
         }
         float sine = 0.0f, growlSource = 0.0f;
         BassExciter::Sources sources;
+        if (sliding)
+        {
+            slide.next();
+            frequency = slide.moving() ? std::exp2(slide.value()) : slideTarget;
+            sliding = slide.moving();
+        }
         const auto hz = frequency * bendRatio;
         if (envelope.active())
         {
@@ -275,6 +293,9 @@ private:
     double splitTarget = 140.0, driveAmountTarget = 0.5, currentSplit = -1.0;
     double currentNotchHz = -1.0;
     double rate = 44100.0, frequency = 0.0;
+    dsp_core::LinearRamp slide; // log2 pitch while gliding
+    double slideTarget = 0.0;
+    bool sliding = false;
     std::uint32_t phase = 0;
     float lastOutput = 0.0f, transitionStart = 0.0f;
     int transitionSamples = 89, smoothingSamples = 441, transitionRemaining = 0;

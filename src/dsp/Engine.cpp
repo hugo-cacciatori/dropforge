@@ -39,6 +39,9 @@ void Engine::reset() noexcept
     serial = 0;
     for (auto& wheel : bend)
         wheel.reset(1.0);
+    wheels.fill(8192);
+    bassKeyHeld = false;
+    glideSamples = static_cast<int>(std::lround(rate * glideMs / 1000.0));
     // A pending change is applied now: nothing sounds after a reset.
     if (furnaceSetup[furnaceSlot] != furnaceTarget) { furnaceSetup[furnaceSlot] = furnaceTarget; furnaces[furnaceSlot].setDesign(furnaceForMode(furnaceTarget.mode, furnaceTarget.destroy)); }
     for (std::size_t slot = 0; slot < 2; ++slot) furnaces[slot].setDrop(furnaceSetup[slot].drop);
@@ -180,6 +183,7 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
         if (bass)
         {
             bassSuspended = false;
+            bassKeyHeld = false; // re-entry is a fresh attack, never a glide
             updateBass(router.bassKey().held() ? NoteRouter::Change::attack : NoteRouter::Change::release);
         }
     }
@@ -226,10 +230,10 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
 {
     const auto ratio = bend[static_cast<std::size_t>(channel - 1)].value();
     const auto age = ++serial;
-    furnaces[furnaceSlot].start(channel, note, velocity, ratio, age);
+    furnaces[furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide());
     // The outgoing mode plays along until its fade ends, so the crossfade
     // carries the same notes on both sides.
-    if (furnaceFade > 0) furnaces[1 - furnaceSlot].start(channel, note, velocity, ratio, age);
+    if (furnaceFade > 0) furnaces[1 - furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide());
 }
 
 void Engine::noteOff(int channel, int note) noexcept
@@ -262,8 +266,22 @@ void Engine::updateBass(NoteRouter::Change change) noexcept
     {
         bassChannel = key.channel;
         bassBendOffset.reset(0.0);
-        startBass(bassVoices[bassSlot]);
-        if (bassFade > 0) startBass(bassVoices[1 - bassSlot]);
+        if (glideOn && bassKeyHeld)
+        {
+            // Glide: Anvil slides to its new key as one line, no new attack.
+            for (std::size_t i = 0; i < (bassFade > 0 ? 2u : 1u); ++i)
+            {
+                auto& voice = bassVoices[i == 0 ? bassSlot : 1 - bassSlot];
+                voice.legato(NoteRouter::bassFrequency(key.note), activeGlide());
+                voice.retargetVelocity(key.velocity);
+            }
+        }
+        else
+        {
+            startBass(bassVoices[bassSlot]);
+            if (bassFade > 0) startBass(bassVoices[1 - bassSlot]);
+        }
+        bassKeyHeld = true;
     }
     else if (change == NoteRouter::Change::retarget)
     {
@@ -277,6 +295,7 @@ void Engine::updateBass(NoteRouter::Change change) noexcept
     else if (change == NoteRouter::Change::release)
     {
         for (auto& voice : bassVoices) voice.stop();
+        bassKeyHeld = false;
     }
 }
 
@@ -409,10 +428,29 @@ void Engine::pitchBend(int channel, int wheel) noexcept
 {
     if (channel >= 1 && channel <= 16)
     {
+        wheels[static_cast<std::size_t>(channel - 1)] = std::clamp(wheel, 0, 16383);
         const auto position = std::clamp(wheel, 0, 16383) - 8192;
-        const auto semitones = 2.0 * position / (position < 0 ? 8192.0 : 8191.0);
+        const auto semitones = bendRange * position / (position < 0 ? 8192.0 : 8191.0);
         bend[static_cast<std::size_t>(channel - 1)].setTarget(std::exp2(semitones / 12.0), transitionSamples);
     }
+}
+
+void Engine::setBendRange(int semitones) noexcept
+{
+    constexpr std::array<int, 5> allowed{2, 5, 7, 12, 24};
+    if (std::find(allowed.begin(), allowed.end(), semitones) == allowed.end()) semitones = 2;
+    if (semitones == bendRange) return;
+    bendRange = semitones;
+    // A wheel held off centre follows the new range (smoothed, no jump).
+    for (int channel = 1; channel <= 16; ++channel)
+        if (wheels[static_cast<std::size_t>(channel - 1)] != 8192) pitchBend(channel, wheels[static_cast<std::size_t>(channel - 1)]);
+}
+
+void Engine::setGlide(bool on, float milliseconds) noexcept
+{
+    glideOn = on;
+    glideMs = std::isfinite(milliseconds) ? std::clamp(milliseconds, 0.0f, 500.0f) : 80.0f;
+    glideSamples = static_cast<int>(std::lround(rate * glideMs / 1000.0));
 }
 
 void Engine::setLayerLevels(float bassDb, float rhythmDb) noexcept

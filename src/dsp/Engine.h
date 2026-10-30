@@ -113,6 +113,13 @@ public:
         anvilTarget = bassSetup[bassSlot] = {static_cast<int>(grit), false};
         bassVoices[bassSlot].setMode(grit, false);
     }
+    // Bend Range (SPEC section 3): 2, 5, 7, 12 or 24 semitones each way.
+    void setBendRange(int semitones) noexcept;
+    // Glide (SPEC section 3): Anvil and Furnace slide to new pitches over the
+    // time (0-500 ms) instead of jumping; Blade has its own Portamento.
+    void setGlide(bool on, float milliseconds) noexcept;
+    // Test hook: the pitch Anvil's voice sounds now, before bend.
+    double bassPitch() const noexcept { return bassVoices[bassSlot].currentPitch(); }
     void noteOn(int channel, int note, int velocity) noexcept;
     void noteOff(int channel, int note) noexcept;
     void allNotesOff(int channel) noexcept;
@@ -186,6 +193,12 @@ private:
     dsp_core::LinearRamp leadPower, leadMixLevel, leadBendOffset;
     double leadMixTarget = 1.0;
     void updateLead(NoteRouter::Change change) noexcept;
+    int bendRange = 2;
+    std::array<int, 16> wheels{}; // last wheel position per channel, for range changes
+    bool glideOn = false, bassKeyHeld = false;
+    float glideMs = 80.0f;
+    int glideSamples = 0;
+    int activeGlide() const noexcept { return glideOn ? std::max(1, glideSamples) : 0; }
     // The solo rule (SPEC section 3): an instrument playing alone follows the
     // newest key; with another instrument on, Anvil the lowest, Blade the highest.
     NoteRouter::BassRule bassRule() const noexcept

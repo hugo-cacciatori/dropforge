@@ -16,6 +16,11 @@ target_link_libraries(dropforge_blade_tests PRIVATE dropforge_core)
 add_test(NAME blade_voice COMMAND dropforge_blade_tests)
 set_tests_properties(blade_voice PROPERTIES TIMEOUT 300)
 
+# Performance controls: Bend Range and Glide (SPEC section 3).
+add_executable(dropforge_performance_tests PerformanceTests.cpp)
+target_link_libraries(dropforge_performance_tests PRIVATE dropforge_core)
+add_test(NAME performance COMMAND dropforge_performance_tests)
+
 # Gates for every Anvil x Furnace mode pair, clean and destroyed (SPEC section 12).
 add_executable(dropforge_combination_tests CombinationTests.cpp)
 target_include_directories(dropforge_combination_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")

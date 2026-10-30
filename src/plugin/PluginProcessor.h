@@ -75,6 +75,9 @@ private:
     std::atomic<float>* leadPortamento = nullptr;
     std::atomic<float>* leadPortamentoMs = nullptr;
     std::atomic<float>* leadOctave = nullptr;
+    std::atomic<float>* bendRangeChoice = nullptr;
+    std::atomic<float>* glideEnabled = nullptr;
+    std::atomic<float>* glideTime = nullptr;
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};

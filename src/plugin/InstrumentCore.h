@@ -66,6 +66,12 @@ public:
     void setLead(bool on, float levelDb) noexcept { engine.setLeadEnabled(on); engine.setLeadLevel(levelDb); }
     // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
     void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
+    // Performance (SPEC section 3): Bend Range in semitones; Glide on/off and time.
+    void setPerformance(int bendRange, bool glide, float glideMs) noexcept
+    {
+        engine.setBendRange(bendRange);
+        engine.setGlide(glide, glideMs);
+    }
     // Blade's Portamento (0 Off, 1 Legato, 2 Always) and time, and Octave.
     void setLeadPlaying(int portamento, float milliseconds, int octave) noexcept
     {

@@ -90,9 +90,52 @@ public:
         }
     }
 
-    void start(int channel, int note, int velocity, double bendRatio, std::uint64_t age) noexcept
+    // glideSamples > 0 (Glide on, SPEC section 3): the new note takes over the
+    // releasing voice nearest in pitch and slides from it without a new
+    // attack, so a chord change glides note for note; with no releasing voice
+    // it starts fresh, sliding from the nearest sounding pitch.
+    void start(int channel, int note, int velocity, double bendRatio, std::uint64_t age, int glideSamples = 0) noexcept
+    {
+        if (glideSamples > 0)
+        {
+            const auto target = NoteRouter::frequency(note) * (drop ? 0.5 : 1.0);
+            Voice* releasing = nullptr;
+            Voice* nearest = nullptr;
+            const auto distance = [target](const Voice& v) noexcept { return std::abs(std::log2(v.pitch() / target)); };
+            for (auto& v : voices)
+            {
+                if (!v.active() || v.frequency <= 0.0 || (v.channel == channel && v.note == note)) continue;
+                if (!v.keyDown && (releasing == nullptr || distance(v) < distance(*releasing))) releasing = &v;
+                if (nearest == nullptr || distance(v) < distance(*nearest)) nearest = &v;
+            }
+            if (releasing != nullptr)
+            {
+                releasing->slideTo(target, glideSamples);
+                releasing->envelope.resume();
+                releasing->velocity = std::min(velocity, 127) / 127.0;
+                releasing->channel = channel;
+                releasing->note = note;
+                releasing->keyDown = true;
+                releasing->age = age;
+                return;
+            }
+            const auto from = nearest != nullptr ? nearest->pitch() : 0.0;
+            startVoice(channel, note, velocity, bendRatio, age);
+            if (from > 0.0)
+            {
+                auto& fresh = voices[NoteRouter::pickVoice(voices, channel, note)];
+                fresh.frequency = from;
+                fresh.slideTo(target, glideSamples);
+                fresh.oscillators.setPitch(from * bendRatio, rate);
+            }
+            return;
+        }
+        startVoice(channel, note, velocity, bendRatio, age);
+    }
+    void startVoice(int channel, int note, int velocity, double bendRatio, std::uint64_t age) noexcept
     {
         auto& voice = voices[NoteRouter::pickVoice(voices, channel, note)];
+        voice.sliding = false;
         voice.transitionStart = voice.lastOutput;
         voice.transitionRemaining = transitionSamples;
         voice.oscillators.setDesign(design.voice);
@@ -150,6 +193,8 @@ public:
                 }
                 // Pitch follows the bend at control rate: a 2 ms bend ramp moves
                 // in steps of 0.7 ms or less, too fine to hear as stepping.
+                // A glide advances every sample and retunes at control rate.
+                if (voice.sliding) voice.advanceSlide();
                 if (voice.controlCountdown == 0)
                 {
                     voice.oscillators.setPitch(voice.frequency * ratio[i], rate);
@@ -244,6 +289,24 @@ private:
         std::uint64_t age = 0;
         bool keyDown = false;
         bool active() const noexcept { return envelope.active() || transitionRemaining > 0; }
+        // Glide: frequency follows the slide, landing exactly on the target.
+        dsp_core::LinearRamp slide;
+        double slideTarget = 0.0;
+        bool sliding = false;
+        double pitch() const noexcept { return frequency; }
+        void slideTo(double hz, int samples) noexcept
+        {
+            slide.reset(std::log2(frequency));
+            slide.setTarget(std::log2(hz), samples);
+            slideTarget = hz;
+            sliding = true;
+        }
+        void advanceSlide() noexcept
+        {
+            slide.next();
+            frequency = slide.moving() ? std::exp2(slide.value()) : slideTarget;
+            sliding = slide.moving();
+        }
     };
     FurnaceDesign design = FurnaceDesign::candidateA();
     bool drop = false;

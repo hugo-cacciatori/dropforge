@@ -76,6 +76,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::AudioParameterFloatAttributes{}.withLabel("ms")));
     layout.add(std::make_unique<juce::AudioParameterInt>(
         juce::ParameterID{dropforge::parameters::leadOctave, 1}, "Blade Octave", -1, 1, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::bendRange, 1}, "Bend Range", juce::StringArray{"2", "5", "7", "12", "24"}, 0));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::glideOn, 1}, "Glide", false));
+    juce::NormalisableRange<float> glideRange{0.0f, 500.0f};
+    glideRange.setSkewForCentre(100.0f);
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{dropforge::parameters::glideMs, 1}, "Glide Time", glideRange, 80.0f,
+        juce::AudioParameterFloatAttributes{}.withLabel("ms")));
     return layout;
 }
 
@@ -101,6 +110,9 @@ DropforgeProcessor::DropforgeProcessor()
     leadPortamento = state.getRawParameterValue(dropforge::parameters::leadPortamento);
     leadPortamentoMs = state.getRawParameterValue(dropforge::parameters::leadPortamentoMs);
     leadOctave = state.getRawParameterValue(dropforge::parameters::leadOctave);
+    bendRangeChoice = state.getRawParameterValue(dropforge::parameters::bendRange);
+    glideEnabled = state.getRawParameterValue(dropforge::parameters::glideOn);
+    glideTime = state.getRawParameterValue(dropforge::parameters::glideMs);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -175,6 +187,9 @@ void DropforgeProcessor::applyModes() noexcept
     core.setDestruction(readToggle(bassDestroy, false), readToggle(rhythmDestroy, false));
     core.setLeadMode(index(leadMode), readToggle(leadDestroy, false));
     const auto octave = leadOctave->load(std::memory_order_relaxed);
+    constexpr std::array<int, 5> ranges{2, 5, 7, 12, 24};
+    core.setPerformance(ranges[static_cast<std::size_t>(std::clamp(index(bendRangeChoice), 0, 4))], readToggle(glideEnabled, false),
+                        glideTime->load(std::memory_order_relaxed));
     core.setLeadPlaying(std::clamp(index(leadPortamento), 0, 2), leadPortamentoMs->load(std::memory_order_relaxed),
                         std::isfinite(octave) ? static_cast<int>(std::lround(octave)) : 0);
 }
