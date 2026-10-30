@@ -120,7 +120,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{fx::fxDelayMode, 1}, "Delay Mode",
         juce::StringArray{"Stereo", "Ping-pong"}, 1));
     percent(fx::fxDelayWidth, "Delay Width", 100.0f, 100.0f);
-    percent(fx::fxDelayMix, "Delay Mix", 100.0f, 25.0f);
+    percent(fx::fxDelayMix, "Delay Mix", 100.0f, 50.0f);
     skewed(fx::fxDelayLowCut, "Delay Low Cut", 20.0f, 2000.0f, 250.0f, 280.0f, "Hz");
     skewed(fx::fxDelayHighCut, "Delay High Cut", 1000.0f, 20000.0f, 6000.0f, 6500.0f, "Hz");
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxReverbOn, 1}, "Reverb", false));
@@ -131,7 +131,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     percent(fx::fxReverbDamping, "Reverb Damping", 100.0f, 40.0f);
     percent(fx::fxReverbModulation, "Reverb Modulation", 100.0f, 30.0f);
     percent(fx::fxReverbWidth, "Reverb Width", 100.0f, 100.0f);
-    percent(fx::fxReverbMix, "Reverb Mix", 100.0f, 20.0f);
+    percent(fx::fxReverbMix, "Reverb Mix", 100.0f, 40.0f);
     skewed(fx::fxReverbLowCut, "Reverb Low Cut", 20.0f, 2000.0f, 250.0f, 250.0f, "Hz");
     skewed(fx::fxReverbHighCut, "Reverb High Cut", 1000.0f, 20000.0f, 6000.0f, 7000.0f, "Hz");
     percent(fx::spaceAmount, "Space", 100.0f, 50.0f);
@@ -304,13 +304,13 @@ void DropforgeProcessor::applyFx() noexcept
     settings.delayFeedback = value(9, 25.0f) / 100.0f;
     settings.delayPingPong = value(10, 1.0f) >= 0.5f;
     settings.delayWidth = value(11, 100.0f) / 100.0f;
-    settings.delayMix = value(12, 25.0f) / 100.0f;
+    settings.delayMix = value(12, 50.0f) / 100.0f;
     settings.delayLowCutHz = value(13, 280.0f);
     settings.delayHighCutHz = value(14, 6500.0f);
     settings.reverbOn = value(15, 0.0f) >= 0.5f;
     settings.reverb = {value(16, 0.8f), value(17, 20.0f), value(18, 60.0f) / 100.0f, value(19, 80.0f) / 100.0f, value(20, 40.0f) / 100.0f,
                        value(21, 30.0f) / 100.0f, value(22, 100.0f) / 100.0f, value(24, 250.0f), value(25, 7000.0f)};
-    settings.reverbMix = value(23, 20.0f) / 100.0f;
+    settings.reverbMix = value(23, 40.0f) / 100.0f;
     settings.space = value(26, 50.0f) / 100.0f;
     settings.saturateOn = value(27, 0.0f) >= 0.5f;
     settings.saturateDriveDb = value(28, 6.0f);

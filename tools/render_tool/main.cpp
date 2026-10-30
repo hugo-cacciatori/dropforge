@@ -463,8 +463,8 @@ int main(int argc, char** argv)
                      "  [--roar-scale 1] (diagnostic Roar depth for listening rounds, 0 to 2)\n"
                      "  [--bpm 120] (default: the MIDI file's tempo) [--send-anvil 60 (only while Anvil plays alone)] [--send-furnace 100] [--send-blade 60] [--duck 50]\n"
                      "  [--delay 0|1] [--delay-sync 0|1] [--delay-division 1/8] [--delay-feel straight|dotted|triplet]\n"
-                     "  [--delay-ms 375] [--delay-feedback 25] [--delay-mix 25] [--delay-mode stereo|pingpong] (percentages 0-100)\n"
-                     "  [--reverb 0|1] [--reverb-decay 0.8] [--reverb-predelay 20] [--reverb-mix 20] [--space 50]\n"
+                     "  [--delay-ms 375] [--delay-feedback 25] [--delay-mix 50] [--delay-mode stereo|pingpong] (percentages 0-100)\n"
+                     "  [--reverb 0|1] [--reverb-decay 0.8] [--reverb-predelay 20] [--reverb-mix 40] [--space 50]\n"
                      "  [--saturate 0|1] [--saturate-drive 6] [--crush 0|1] [--crush-bits 8] [--crush-rate 8000] [--crush-mix 50]\n"
                      "  [--chorus 0|1] [--chorus-mix 40] [--eq 0|1] [--eq-tilt 0] [--eq-low-cut 20] [--eq-high-cut 20000]\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";

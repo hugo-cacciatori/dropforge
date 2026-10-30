@@ -30,11 +30,11 @@ public:
         bool delayOn = false, delaySync = true, delayPingPong = true;
         int delayDivision = 3; // 1/8
         Feel delayFeel = Feel::dotted;
-        float delayMs = 375.0f, delayFeedback = 0.25f, delayWidth = 1.0f, delayMix = 0.25f;
+        float delayMs = 375.0f, delayFeedback = 0.25f, delayWidth = 1.0f, delayMix = 0.5f;
         float delayLowCutHz = 280.0f, delayHighCutHz = 6500.0f;
         bool reverbOn = false;
         FxReverb::Settings reverb{};
-        float reverbMix = 0.2f;
+        float reverbMix = 0.4f;
         // Space (0-1): both wets at once; 0.5 plays them as set, 0 dry,
         // 1 doubles them.
         float space = 0.5f;
