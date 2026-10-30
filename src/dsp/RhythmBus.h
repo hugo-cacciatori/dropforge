@@ -112,9 +112,10 @@ public:
         const auto sample = contour.next(tightFilter.next(input));
         if (foldAmount <= 0.0f)
             return oversampler.next(sample, [amount, push = drivePush](float value) noexcept { return shape(value, amount, push); });
-        return oversampler.next(sample, [amount, push = drivePush, fold = foldAmount](float value) noexcept
+        // Fetch the shared sine table once for the four oversampled reads.
+        return oversampler.next(sample, [amount, push = drivePush, fold = foldAmount, table = dsp_core::sineTable()](float value) noexcept
         {
-            return wavefold(shape(value, amount, push), fold);
+            return wavefold(shape(value, amount, push), fold, table);
         });
     }
     float tone(float sample) noexcept
@@ -141,7 +142,7 @@ public:
     {
         const auto gain = (1.0f + 7.0f * amount) * push;
         constexpr float bias = 0.2f;
-        const auto offset = std::tanh(bias);
+        const auto offset = shapeOffset;
         const auto slope = 1.0f - offset * offset; // tanh'(bias)
         const auto curved = (std::tanh(gain * value + bias) - offset) / (gain * slope);
         const auto blend = std::min(1.0f, 4.0f * amount);
@@ -150,15 +151,18 @@ public:
 
     // A sine wavefolder at unity small-signal gain, blended in by fold:
     // loud peaks fold back down into dense, gnarly upper harmonics.
-    static float wavefold(float value, float fold) noexcept
+    static float wavefold(float value, float fold, const float* table = dsp_core::sineTable()) noexcept
     {
         // The shared sine table instead of std::sin: this runs four times per
         // sample per side, and the table read costs a fraction as much.
         constexpr float folds = 6.0f, cycle = 683565275.57643158f; // 2^32 / (2 pi)
         if (!(std::abs(value) < 64.0f)) value = 0.0f;
         const auto phase = static_cast<std::uint32_t>(static_cast<std::int64_t>(folds * value * cycle));
-        return value + fold * (dsp_core::sine(phase) / folds - value);
+        return value + fold * (dsp_core::sine(table, phase) / folds - value);
     }
+    // tanh(0.2), the drive curve's bias offset: computed once at startup
+    // rather than eight times a sample (the same value, bit for bit).
+    static inline const float shapeOffset = std::tanh(0.2f);
 
 private:
     // Geometric mapping fixes the specified midpoint at 120 Hz.

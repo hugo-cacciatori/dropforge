@@ -146,12 +146,18 @@ public:
         const auto offset = biasOffset;
         auto input = source();
         if (current.preLowpassHz > 0.0) input = preLowpass.next(input);
-        const auto driven = oversampler.next(input, [drive, bias, fold, offset](float x) noexcept
+        const auto driven = oversampler.next(input, [drive, bias, fold, offset, table = dsp_core::sineTable()](float x) noexcept
         {
             // Slightly asymmetric: even harmonics give each lead a vocal edge;
-            // unity gain at small signals. Destruction adds a sine fold on top.
+            // unity gain at small signals. Destruction adds a sine fold on top,
+            // read from the shared table (y is within +-1, 2.5 radians a unit).
             auto y = std::tanh(drive * x + bias) - offset;
-            if (fold > 0.0f) y = (1.0f - fold) * y + fold * std::sin(2.5f * y);
+            if (fold > 0.0f)
+            {
+                constexpr float cycle = 683565275.57643158f; // 2^32 / (2 pi)
+                const auto phase = static_cast<std::uint32_t>(static_cast<std::int64_t>(2.5f * y * cycle));
+                y = (1.0f - fold) * y + fold * dsp_core::sine(table, phase);
+            }
             return y;
         });
         const auto frame = aligned.next({static_cast<float>(envelope.next() * velocity.next()), pendingAttack});
@@ -198,14 +204,14 @@ private:
             {
                 // Three soft saws and a sine an octave down for body.
                 const auto saws = (oscillators[0].next() + oscillators[1].next() + oscillators[2].next()) * (1.0f / 3.0f);
-                const auto sub = dsp_core::sine(dsp_core::sineTable(), subPhase);
+                const auto sub = dsp_core::sine(sineTable, subPhase);
                 subPhase += subIncrement;
                 return 0.7f * saws + 0.45f * sub;
             }
             case 3:
             {
                 // sin(p + a sin p + b sin 2p + feedback x previous output).
-                const auto* table = dsp_core::sineTable();
+                const auto* table = sineTable;
                 const auto phase = fmPhase;
                 fmPhase += fmIncrement;
                 const auto modulation = fmDepth1 * dsp_core::sine(table, phase) + fmDepth2 * dsp_core::sine(table, 2u * phase)
@@ -281,6 +287,7 @@ private:
     std::uint32_t pulseOffset = 0, subPhase = 0, subIncrement = 0, fmPhase = 0, fmIncrement = 0;
     float fmDepth1 = 0.0f, fmDepth2 = 0.0f, fmFeedbackDepth = 0.0f, fmLast = 0.0f;
     float activeDrive = 2.5f, activeFold = 0.0f, biasOffset = 0.0f;
+    const float* sineTable = dsp_core::sineTable();
     dsp_core::FixedEnvelope envelope;
     dsp_core::LinearRamp velocity;
     std::array<dsp_core::WavetableOscillator, 3> oscillators{};
