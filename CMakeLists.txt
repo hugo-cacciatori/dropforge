@@ -60,6 +60,10 @@ juce_add_plugin(Dropforge
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES Instrument Synth)
 
+# Our own Standalone app: JUCE's default behaviour plus --self-test (SPEC section 10).
+target_sources(Dropforge_Standalone PRIVATE src/plugin/StandaloneApp.cpp)
+target_compile_definitions(Dropforge_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
+
 if(WIN32)
     # JUCE's resource generator depends on icons, but not its version-info input.
     # Without this dependency an incremental version bump leaves stale Explorer

@@ -71,6 +71,10 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ui-snapshots")
 add_test(NAME processor_state_editor COMMAND dropforge_processor_tests "${CMAKE_BINARY_DIR}/ui-snapshots/editor.png")
 set_tests_properties(processor_state_editor PROPERTIES TIMEOUT 60)
 
+# The shipped Standalone checks itself offscreen: no window, no audio device.
+add_test(NAME standalone_self_test COMMAND Dropforge_Standalone --self-test)
+set_tests_properties(standalone_self_test PROPERTIES TIMEOUT 120)
+
 # End-to-end file/CLI checks use only JUCE's non-GUI audio/core modules.
 add_executable(dropforge_render_tests RenderTests.cpp)
 target_link_libraries(dropforge_render_tests PRIVATE dropforge_core dropforge_juce_headless)
