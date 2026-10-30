@@ -117,6 +117,7 @@ public:
         const auto plate = plateArea().toFloat();
         g.setGradientFill(juce::ColourGradient(finish.plateTop, 0.0f, plate.getY(), finish.plateBottom, 0.0f, plate.getBottom(), false));
         g.fillRoundedRectangle(plate, 12.0f);
+        paintOrnament(g, plate, finish.accent);
         g.setColour(finish.accent.withAlpha(0.55f));
         g.drawRoundedRectangle(plate.reduced(1.0f), 12.0f, 1.5f);
         g.setColour(juce::Colours::white.withAlpha(0.05f));
@@ -160,6 +161,100 @@ public:
     }
 
 private:
+    // Each mode's own hardware, like a different amp head: a texture over the
+    // whole plate and an emblem in the free top-right corner, never under a control.
+    void paintOrnament(juce::Graphics& g, juce::Rectangle<float> plate, juce::Colour accent) const
+    {
+        juce::Graphics::ScopedSaveState saved(g);
+        juce::Path clip;
+        clip.addRoundedRectangle(plate, 12.0f);
+        g.reduceClipRegion(clip);
+        const juce::Rectangle<float> emblem(plate.getRight() - 420.0f, plate.getY() + 22.0f, 380.0f, 100.0f);
+        switch (shownMode)
+        {
+            case 1: // Riot: hazard stripes along the base and slashing chevrons.
+            {
+                const auto band = plate.withTop(plate.getBottom() - 10.0f);
+                g.setColour(accent.withAlpha(0.22f));
+                for (auto x = band.getX() - 20.0f; x < band.getRight(); x += 24.0f)
+                {
+                    juce::Path stripe;
+                    stripe.addQuadrilateral(x, band.getBottom(), x + 10.0f, band.getBottom(), x + 20.0f, band.getY(), x + 10.0f, band.getY());
+                    g.fillPath(stripe);
+                }
+                for (int i = 0; i < 4; ++i)
+                {
+                    juce::Path chevron;
+                    const auto x = emblem.getRight() - 150.0f + i * 34.0f, y = emblem.getCentreY();
+                    chevron.startNewSubPath(x, y - 30.0f); chevron.lineTo(x + 24.0f, y); chevron.lineTo(x, y + 30.0f);
+                    g.setColour(accent.withAlpha(0.12f + 0.08f * i));
+                    g.strokePath(chevron, juce::PathStrokeType(7.0f, juce::PathStrokeType::mitered));
+                }
+                break;
+            }
+            case 2: // Halo: soft concentric rings glowing from the corner.
+            {
+                const auto centre = juce::Point<float>(emblem.getRight() - 90.0f, emblem.getCentreY() + 6.0f);
+                g.setGradientFill(juce::ColourGradient(accent.withAlpha(0.16f), centre, accent.withAlpha(0.0f), centre.translated(220.0f, 0.0f), true));
+                g.fillEllipse(juce::Rectangle<float>(440.0f, 440.0f).withCentre(centre));
+                for (int ring = 1; ring <= 5; ++ring)
+                {
+                    g.setColour(accent.withAlpha(0.22f - ring * 0.035f));
+                    g.drawEllipse(juce::Rectangle<float>(ring * 30.0f, ring * 30.0f).withCentre(centre), 1.4f);
+                }
+                break;
+            }
+            case 3: // Alloy: a machined hex mesh and an FM operator diagram.
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.025f));
+                constexpr float size = 22.0f;
+                int row = 0;
+                for (auto y = plate.getY(); y < plate.getBottom() + size; y += size * 0.866f, ++row)
+                    for (auto x = plate.getX() + (row % 2 != 0 ? size * 0.5f : 0.0f); x < plate.getRight() + size; x += size)
+                    {
+                        juce::Path hex;
+                        for (int corner = 0; corner < 6; ++corner)
+                        {
+                            const auto angle = juce::MathConstants<float>::pi / 3.0f * corner + juce::MathConstants<float>::pi / 6.0f;
+                            const auto point = juce::Point<float>(x, y).getPointOnCircumference(size * 0.5f, angle);
+                            if (corner == 0) hex.startNewSubPath(point); else hex.lineTo(point);
+                        }
+                        hex.closeSubPath();
+                        g.strokePath(hex, juce::PathStrokeType(0.8f));
+                    }
+                const auto modulator = juce::Point<float>(emblem.getRight() - 170.0f, emblem.getCentreY() + 10.0f);
+                const auto carrier = modulator.translated(110.0f, 0.0f);
+                g.setColour(accent.withAlpha(0.35f));
+                g.drawArrow(juce::Line<float>(modulator.translated(24.0f, 0.0f), carrier.translated(-24.0f, 0.0f)), 2.0f, 9.0f, 9.0f);
+                for (const auto centre : {modulator, carrier})
+                    g.drawEllipse(juce::Rectangle<float>(46.0f, 46.0f).withCentre(centre), 2.0f);
+                // The modulator's feedback loop.
+                juce::Path loop;
+                loop.startNewSubPath(modulator.translated(-12.0f, -21.0f));
+                loop.cubicTo(modulator.translated(-30.0f, -55.0f), modulator.translated(30.0f, -55.0f), modulator.translated(12.0f, -21.0f));
+                g.strokePath(loop, juce::PathStrokeType(1.6f));
+                g.setFont(titleFont(16.0f));
+                g.drawText("M", juce::Rectangle<float>(46.0f, 46.0f).withCentre(modulator), juce::Justification::centred, false);
+                g.drawText("C", juce::Rectangle<float>(46.0f, 46.0f).withCentre(carrier), juce::Justification::centred, false);
+                break;
+            }
+            default: // Forge: brushed steel and a glowing vent grille.
+            {
+                g.setColour(juce::Colours::white.withAlpha(0.018f));
+                for (auto y = plate.getY() + 2.0f; y < plate.getBottom(); y += 3.0f)
+                    g.drawHorizontalLine(static_cast<int>(y), plate.getX(), plate.getRight());
+                for (int slot = 0; slot < 9; ++slot)
+                {
+                    const juce::Rectangle<float> vent(emblem.getRight() - 210.0f + slot * 22.0f, emblem.getY() + 14.0f, 9.0f, 70.0f);
+                    g.setColour(juce::Colour(0xff0d0e10));
+                    g.fillRoundedRectangle(vent, 4.5f);
+                    g.setGradientFill(juce::ColourGradient(accent.withAlpha(0.0f), 0.0f, vent.getY(), accent.withAlpha(0.35f), 0.0f, vent.getBottom(), false));
+                    g.fillRoundedRectangle(vent.reduced(2.0f), 3.0f);
+                }
+                break;
+            }
+        }
+    }
     juce::Rectangle<int> plateArea() const { return getLocalBounds().withTrimmedTop(82).reduced(16, 0).withTrimmedBottom(16); }
     juce::Rectangle<int> optionColumn() const
     {

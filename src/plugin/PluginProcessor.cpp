@@ -7,8 +7,9 @@
 #include <sstream>
 #include <utility>
 
-static_assert(std::atomic<float>::is_always_lock_free && std::atomic<bool>::is_always_lock_free,
-              "Audio parameter and panic reads must be lock-free");
+static_assert(std::atomic<float>::is_always_lock_free && std::atomic<bool>::is_always_lock_free
+              && std::atomic<std::uint64_t>::is_always_lock_free,
+              "Audio parameter, panic and held-key exchanges must be lock-free");
 
 namespace
 {
@@ -162,6 +163,10 @@ void DropforgeProcessor::publishMeters() noexcept
     keep(meterPeakRight, taken.peakRight, true);
     keep(meterGlueDb, taken.glueReductionDb, false);
     keep(meterLimiterDb, taken.limiterReductionDb, false);
+    const auto keys = core.heldKeys();
+    keysLow.store(keys.low, std::memory_order_relaxed);
+    keysHigh.store(keys.high, std::memory_order_relaxed);
+    bassKey.store(keys.bassNote, std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* DropforgeProcessor::createEditor()

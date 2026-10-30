@@ -306,4 +306,70 @@ private:
     std::array<float, 2> levelDb{-120.0f, -120.0f};
     int clipHold = 0, limitHold = 0, shownLights = 0;
 };
+
+// The routing keyboard (SPEC section 6): every held key lit in the colours of
+// the instruments playing it, so the auto-split is visible while you play.
+// Furnace plays every held key; Anvil plays one, marked by a bar beneath.
+class RoutingKeyboard final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    static constexpr int lowest = 21, highest = 108; // the 88 keys of a piano
+    RoutingKeyboard()
+    {
+        setTitle("Routing keyboard");
+        setTooltip("Routing keyboard: held keys light orange where Furnace plays them; the blue bar marks the one key Anvil plays an octave down.");
+        setInterceptsMouseClicks(true, false);
+    }
+    // Repaints only when the held keys or power changed.
+    void show(std::uint64_t low, std::uint64_t high, int bass, bool anvilOn, bool furnaceOn)
+    {
+        if (low == heldLow && high == heldHigh && bass == bassNote && anvilOn == anvil && furnaceOn == furnace) return;
+        heldLow = low; heldHigh = high; bassNote = bass; anvil = anvilOn; furnace = furnaceOn;
+        repaint();
+    }
+    bool isHeld(int note) const noexcept
+    {
+        return note >= 0 && note < 128 && (((note < 64 ? heldLow : heldHigh) >> (note & 63)) & 1u) != 0;
+    }
+    void paint(juce::Graphics& g) override
+    {
+        const auto whites = countWhites(lowest, highest);
+        const auto keyWidth = getWidth() / static_cast<float>(whites);
+        const auto height = static_cast<float>(getHeight());
+        const auto furnaceColour = furnaceStyle.identity, anvilColour = anvilStyle.identity;
+        // White keys first, then black keys over them.
+        for (const bool blackPass : {false, true})
+        {
+            for (int note = lowest; note <= highest; ++note)
+            {
+                if (isBlack(note) != blackPass) continue;
+                const auto area = keyArea(note, keyWidth, height);
+                const auto held = isHeld(note);
+                auto fill = blackPass ? juce::Colour(0xff0c0d0f) : juce::Colour(0xffc9ccd1);
+                if (held) fill = furnace ? furnaceColour : (anvil && note == bassNote ? anvilColour : colours::dimText);
+                g.setColour(fill);
+                g.fillRect(area.reduced(blackPass ? 0.0f : 0.5f, 0.0f));
+                if (anvil && note == bassNote)
+                {
+                    g.setColour(anvilColour);
+                    g.fillRect(area.withTop(area.getBottom() - std::max(4.0f, height * 0.18f)).reduced(1.0f, 0.0f));
+                }
+            }
+        }
+        g.setColour(colours::edge);
+        g.drawRect(getLocalBounds().toFloat(), 1.0f);
+    }
+private:
+    static bool isBlack(int note) noexcept { const auto pc = note % 12; return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10; }
+    static int countWhites(int from, int to) noexcept { int n = 0; for (int note = from; note <= to; ++note) n += isBlack(note) ? 0 : 1; return n; }
+    static juce::Rectangle<float> keyArea(int note, float keyWidth, float height) noexcept
+    {
+        if (!isBlack(note)) return {countWhites(lowest, note - 1) * keyWidth, 0.0f, keyWidth, height};
+        const auto x = countWhites(lowest, note) * keyWidth - keyWidth * 0.32f;
+        return {x, 0.0f, keyWidth * 0.64f, height * 0.6f};
+    }
+    std::uint64_t heldLow = 0, heldHigh = 0;
+    int bassNote = -1;
+    bool anvil = true, furnace = true;
+};
 }

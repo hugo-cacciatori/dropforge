@@ -92,6 +92,19 @@ public:
         }
     }
     Meters takeMeters() noexcept { return std::exchange(meters, Meters{}); }
+    // The routing keyboard's view (SPEC section 6): one bit per held MIDI
+    // note, and the key Anvil plays (-1 while it plays none).
+    struct Keys { std::uint64_t low = 0, high = 0; int bassNote = -1; };
+    Keys heldKeys() const noexcept
+    {
+        Keys keys;
+        engine.forEachHeldKey([&keys](int, int note, int)
+        {
+            (note < 64 ? keys.low : keys.high) |= std::uint64_t{1} << (note & 63);
+        });
+        keys.bassNote = engine.bassTarget().note;
+        return keys;
+    }
 
 private:
     Engine engine;

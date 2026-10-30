@@ -38,8 +38,9 @@ SuiteLookAndFeel& suiteLook()
 }
 
 const juce::Rectangle<int> headerArea{0, 0, designWidth, 84};
-const juce::Rectangle<int> pageArea{24, 148, designWidth - 48, 492};
-const juce::Rectangle<int> footerArea{0, 652, designWidth, designHeight - 652};
+const juce::Rectangle<int> pageArea{24, 148, designWidth - 48, 470};
+// Footer: the routing keyboard above the help line.
+const juce::Rectangle<int> footerArea{0, 628, designWidth, designHeight - 628};
 }
 
 DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
@@ -105,7 +106,7 @@ DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
     hoverHelp.setColour(juce::Label::textColourId, colours::dimText);
     hoverHelp.setJustificationType(juce::Justification::centredLeft);
     hoverHelp.setMinimumHorizontalScale(1.0f);
-    for (auto* child : std::initializer_list<juce::Component*>{&mark, &panic, &outputLabel, &output, &meter, &about, &hoverHelp})
+    for (auto* child : std::initializer_list<juce::Component*>{&mark, &panic, &outputLabel, &output, &meter, &about, &keyboard, &hoverHelp})
         canvas.addAndMakeVisible(child);
     addAndMakeVisible(canvas);
     layoutCanvas();
@@ -184,7 +185,8 @@ void DropforgeEditor::layoutCanvas()
         tabs[(size_t) page]->setBounds(pageArea.getX() + page * 240, 94, 232, 56);
         pages[(size_t) page]->setBounds(pageArea);
     }
-    hoverHelp.setBounds(footerArea.reduced(24, 10));
+    keyboard.setBounds(footerArea.getX() + 24, footerArea.getY() + 8, footerArea.getWidth() - 48, 30);
+    hoverHelp.setBounds(footerArea.getX() + 24, footerArea.getY() + 42, footerArea.getWidth() - 48, 26);
 }
 
 void DropforgeEditor::resized()
@@ -218,6 +220,9 @@ void DropforgeEditor::timerCallback()
     meter.push(meters.peakLeft, meters.peakRight, meters.limiterReductionDb);
     const auto current = juce::jlimit(0, pageCount - 1, owner.currentPage());
     auto& state = owner.parameterState();
+    const auto keys = owner.heldKeys();
+    keyboard.show(keys.low, keys.high, keys.bassNote, state.getRawParameterValue(ids::bassEnabled)->load() >= 0.5f,
+                  state.getRawParameterValue(ids::rhythmEnabled)->load() >= 0.5f);
     for (int index = 0; index < pageCount; ++index)
     {
         auto& tab = *tabs[(size_t) index];

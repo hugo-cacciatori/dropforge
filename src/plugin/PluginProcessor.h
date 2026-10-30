@@ -40,6 +40,11 @@ public:
         return {meterPeakLeft.exchange(0.0f, std::memory_order_relaxed), meterPeakRight.exchange(0.0f, std::memory_order_relaxed),
                 meterGlueDb.exchange(0.0f, std::memory_order_relaxed), meterLimiterDb.exchange(0.0f, std::memory_order_relaxed)};
     }
+    // Held keys for the routing keyboard, published after every block.
+    dropforge::InstrumentCore::Keys heldKeys() const noexcept
+    {
+        return {keysLow.load(std::memory_order_relaxed), keysHigh.load(std::memory_order_relaxed), bassKey.load(std::memory_order_relaxed)};
+    }
     // Which suite page the editor shows (0 Anvil, 1 Furnace, in signal order).
     // A per-session view preference only: it is not saved and never changes the sound.
     int currentPage() const noexcept { return page.load(std::memory_order_relaxed); }
@@ -68,5 +73,7 @@ private:
     std::atomic<float> meterPeakLeft{0.0f}, meterPeakRight{0.0f}, meterGlueDb{0.0f}, meterLimiterDb{0.0f};
     void publishMeters() noexcept;
     std::atomic<int> page{0};
+    std::atomic<std::uint64_t> keysLow{0}, keysHigh{0};
+    std::atomic<int> bassKey{-1};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DropforgeProcessor)
 };

@@ -24,6 +24,7 @@ public:
     NumericKnob& outputKnob() noexcept { return output; }
     juce::Button& panicButton() noexcept { return panic; }
     juce::Label& helpLine() noexcept { return hoverHelp; }
+    dropforge::ui::RoutingKeyboard& routingKeyboard() noexcept { return keyboard; }
     static constexpr int pageCount = 2;
 
 private:
@@ -44,6 +45,7 @@ private:
     juce::Label outputLabel, hoverHelp;
     NumericKnob output;
     dropforge::ui::OutputMeter meter;
+    dropforge::ui::RoutingKeyboard keyboard;
     juce::TextButton mark{"DROPFORGE"}, panic{"Panic"}, about{"i"};
     std::array<std::unique_ptr<dropforge::ui::InstrumentTab>, pageCount> tabs;
     std::array<std::unique_ptr<dropforge::ui::InstrumentPage>, pageCount> pages;

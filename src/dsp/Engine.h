@@ -98,6 +98,9 @@ public:
     NoteTarget bassTarget() const noexcept;
     // Blade's selected key: the highest held key, tracked whether or not it sounds.
     NoteTarget leadTarget() const noexcept;
+    // Every held key in press order, for the editor's routing keyboard.
+    template <typename Visitor>
+    void forEachHeldKey(Visitor&& visit) const noexcept { router.forEachNewestHeldKey(router.heldCount(), visit); }
     using RhythmTarget = FurnaceLayer::Target;
     std::array<RhythmTarget, rhythmVoiceCount> rhythmTargets() const noexcept { return furnaces[furnaceSlot].targets(bend); }
     // Furnace's multiband gain per band (0 low, 1 mid, 2 high), in dB, for

@@ -578,6 +578,30 @@ void editorTests(const juce::String& snapshot)
     // Release, latency and the master clipper filter's ringing, as above.
     constexpr int quietFrom = 288 + dropforge::InstrumentCore::latencySamples + dsp_core::Oversampler4xFloat::latencySamples;
     require(audio.getMagnitude(0, quietFrom, 512 - quietFrom) == 0.0f, "Panic clears audio through realtime request");
+
+    // Routing keyboard: the audio thread publishes held keys, the editor lights them.
+    auto& keyboard = editor->routingKeyboard();
+    const auto playChord = [&]
+    {
+        midi.clear();
+        for (const int note : {40, 52, 55, 59})
+            midi.addEvent(juce::MidiMessage::noteOn(1, note, static_cast<juce::uint8>(100)), 0);
+        processor.processBlock(audio, midi);
+        refreshUi();
+    };
+    refreshUi();
+    require(!keyboard.isHeld(40) && processor.heldKeys().bassNote == -1, "nothing lit after Panic");
+    playChord();
+    const auto keys = processor.heldKeys();
+    require(keys.bassNote == 40 && keys.high == 0 && keys.low == ((1ull << 40) | (1ull << 52) | (1ull << 55) | (1ull << 59)),
+            "the processor publishes held keys and Anvil's lowest key");
+    require(keyboard.isHeld(40) && keyboard.isHeld(59) && !keyboard.isHeld(41), "the routing keyboard lights the held chord");
+    setToggle(processor, ids::bassEnabled, false);
+    midi.clear(); processor.processBlock(audio, midi);
+    require(processor.heldKeys().bassNote == -1, "no Anvil key while Anvil is off");
+    setToggle(processor, ids::bassEnabled, true);
+    midi.clear(); processor.processBlock(audio, midi);
+    require(processor.heldKeys().bassNote == 40, "Anvil's key returns with its power");
     if (snapshot.isNotEmpty())
     {
         setOutput(processor, 0);
