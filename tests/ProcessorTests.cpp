@@ -8,6 +8,25 @@
 #include <memory>
 #include <vector>
 #include <locale>
+#include <atomic>
+#include <new>
+
+// Real-time safety (SPEC section 10): this test program replaces the global
+// allocator so it can count every allocation made while processBlock runs.
+namespace
+{
+// Thread-local: JUCE's own background threads may allocate at any moment.
+thread_local bool countingAllocations = false;
+std::atomic<int> allocationsWhileCounting{0};
+}
+void* operator new(std::size_t size)
+{
+    if (countingAllocations) allocationsWhileCounting.fetch_add(1, std::memory_order_relaxed);
+    if (auto* memory = std::malloc(size == 0 ? 1 : size)) return memory;
+    throw std::bad_alloc();
+}
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 #if JUCE_LINUX
 #include "X11TestDisplay.h"
 #endif
@@ -395,6 +414,68 @@ void routingBridgeTests()
     std::cout << "host_routing_matrix=24 rate/mode cases; live automation/held recall/reset/panic exact\n";
 }
 
+// processBlock never allocates once prepared: notes, chord changes, bends,
+// all-notes-off, panic, mode, Destruction, option and power changes while
+// sounding, at block sizes 1, 73 and 512. Everything the host would prepare
+// (buffers, MIDI events, parameter writes) happens outside the counted calls.
+void allocationTests()
+{
+    namespace ids = dropforge::parameters;
+    countingAllocations = true;
+    int* volatile probe = new int(1); // volatile: the compiler may not elide it
+    countingAllocations = false;
+    delete probe;
+    require(allocationsWhileCounting.exchange(0) == 1, "the allocation counter sees an allocation");
+    DropforgeProcessor processor;
+    processor.setRateAndBufferSizeDetails(48000.0, 512);
+    processor.prepareToPlay(48000.0, 512);
+    juce::AudioBuffer<float> audio(2, 512);
+    juce::MidiBuffer midi;
+    midi.ensureSize(4096);
+    int blocks = 0;
+    const auto process = [&](int size, const std::vector<juce::MidiMessage>& events)
+    {
+        midi.clear();
+        for (const auto& event : events) midi.addEvent(event, 0);
+        juce::AudioBuffer<float> view(audio.getArrayOfWritePointers(), 2, size);
+        countingAllocations = true;
+        processor.processBlock(view, midi);
+        countingAllocations = false;
+        ++blocks;
+    };
+    const auto choose = [&](const char* id, float value)
+    {
+        auto* parameter = processor.parameterState().getParameter(id);
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+    };
+    for (const int size : {512, 73, 1})
+    {
+        const auto repeat = size == 1 ? 600 : 20;
+        process(size, {juce::MidiMessage::noteOn(1, 40, static_cast<juce::uint8>(110)), juce::MidiMessage::noteOn(1, 47, static_cast<juce::uint8>(110)),
+                       juce::MidiMessage::noteOn(1, 52, static_cast<juce::uint8>(110)), juce::MidiMessage::noteOn(2, 55, static_cast<juce::uint8>(90))});
+        for (int step = 0; step < 8; ++step)
+        {
+            choose(ids::bassMode, static_cast<float>(step % 4));
+            choose(ids::rhythmMode, static_cast<float>((step + 1) % 4));
+            setToggle(processor, ids::bassDestroy, step % 2 == 0);
+            setToggle(processor, ids::rhythmDestroy, step % 3 == 0);
+            setToggle(processor, ids::rhythmMono, step % 2 == 1);
+            setToggle(processor, ids::rhythmDrop, step == 5);
+            setToggle(processor, ids::bassEnabled, step != 3);
+            setToggle(processor, ids::rhythmEnabled, step != 6);
+            setOutput(processor, -3.0f * static_cast<float>(step % 3));
+            process(size, {juce::MidiMessage::pitchWheel(1, 4096 + 1000 * step), juce::MidiMessage::noteOn(1, 36 + step, static_cast<juce::uint8>(100))});
+            for (int block = 0; block < repeat; ++block) process(size, {});
+            process(size, {juce::MidiMessage::noteOff(1, 36 + step)});
+        }
+        process(size, {juce::MidiMessage::allNotesOff(1), juce::MidiMessage::controllerEvent(2, 64, 127)});
+        processor.requestPanic();
+        process(size, {});
+    }
+    std::cout << "allocation_guard blocks=" << blocks << " allocations=" << allocationsWhileCounting.load() << '\n';
+    require(allocationsWhileCounting.load() == 0, "processBlock never allocates after prepare");
+}
+
 void editorTests(const juce::String& snapshot)
 {
     namespace ids = dropforge::parameters;
@@ -687,6 +768,7 @@ int main(int argc, char** argv)
     processorTests();
     headlessParityTests();
     routingBridgeTests();
+    allocationTests();
     editorTests(argc > 1 ? juce::String(argv[1]) : juce::String{});
     keyboardTests();
     return 0;

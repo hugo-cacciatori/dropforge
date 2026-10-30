@@ -10,6 +10,13 @@ add_executable(dropforge_mode_tests ModeTests.cpp)
 target_link_libraries(dropforge_mode_tests PRIVATE dropforge_core)
 add_test(NAME mode_switching COMMAND dropforge_mode_tests)
 
+# Gates for every Anvil x Furnace mode pair, clean and destroyed (SPEC section 12).
+add_executable(dropforge_combination_tests CombinationTests.cpp)
+target_include_directories(dropforge_combination_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")
+target_link_libraries(dropforge_combination_tests PRIVATE dropforge_core)
+add_test(NAME combination_gates COMMAND dropforge_combination_tests)
+set_tests_properties(combination_gates PROPERTIES TIMEOUT 300)
+
 add_executable(dropforge_master_tests MasterTests.cpp)
 target_link_libraries(dropforge_master_tests PRIVATE dropforge_core)
 add_test(NAME master_chain COMMAND dropforge_master_tests)
