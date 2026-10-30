@@ -363,6 +363,47 @@ void portamentoAndOctave()
     std::cout << "portamento and octave passed\n";
 }
 
+// The solo rule (SPEC section 3): Anvil the lowest and Blade the highest key
+// whenever another instrument plays; an instrument alone follows the newest.
+void soloRule()
+{
+    const auto press = [](Engine& engine) { for (const int note : {52, 40, 64, 47}) engine.noteOn(1, note, 100); };
+    {
+        // Anvil + Blade, Furnace off: still lowest and highest.
+        Engine engine;
+        engine.setLayersEnabled(true, false);
+        engine.setLeadEnabled(true);
+        engine.prepare(48000.0);
+        press(engine);
+        require(engine.bassTarget().note == 40 && engine.leadTarget().note == 64,
+                "with Furnace off, Anvil still takes the lowest key and Blade the highest");
+        // Blade off: Anvil plays alone and follows the newest key.
+        engine.setLeadEnabled(false);
+        require(engine.bassTarget().note == 47, "Anvil alone follows the newest key");
+        engine.setLeadEnabled(true);
+        require(engine.bassTarget().note == 40, "Blade joining returns Anvil to the lowest key");
+        // Anvil off: Blade plays alone and follows the newest key.
+        engine.setLayersEnabled(false, false);
+        require(engine.leadTarget().note == 47, "Blade alone follows the newest key");
+        engine.noteOn(1, 45, 100);
+        require(engine.leadTarget().note == 45, "soloed Blade moves to each new key, even a lower one");
+        engine.noteOff(1, 45);
+        require(engine.leadTarget().note == 47, "and falls back to the previous newest on release");
+        engine.setLayersEnabled(false, true);
+        require(engine.leadTarget().note == 64, "Furnace joining returns Blade to the highest key");
+    }
+    {
+        // Soloed Blade sounds the newest key (a real attack on the new note).
+        auto engine = leadEngine(48000.0, false, false);
+        engine.noteOn(1, 64, 100);
+        render(engine, 4800);
+        engine.noteOn(1, 60, 100);
+        render(engine, 64);
+        require(std::abs(engine.leadPitch() - 440.0 * std::exp2((60 - 69) / 12.0)) < 1.0e-6, "soloed Blade plays the newest key");
+    }
+    std::cout << "solo rule passed\n";
+}
+
 int main()
 {
     offByDefaultAndMono();
@@ -373,5 +414,6 @@ int main()
     modeLoudness();
     modeSwitching();
     portamentoAndOctave();
+    soloRule();
     return 0;
 }

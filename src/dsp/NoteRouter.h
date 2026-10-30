@@ -11,8 +11,8 @@ namespace dropforge
 // The auto-split (SPEC section 3): one press-order list of held keys decides
 // which note each layer plays. Selection uses MIDI note numbers, never bent
 // frequencies, so hosts that label octaves differently all route alike.
-//   Anvil: the newest held key, or the lowest while Furnace is on.
-//   Blade: the highest held key, whatever else is on.
+//   Anvil: the lowest held key; the newest while it plays alone (solo).
+//   Blade: the highest held key; the newest while it plays alone (solo).
 //   Furnace: every held key, through pickVoice() into a fixed voice bank.
 // Equal pitches on two channels are two keys; the earlier press keeps the
 // lowest/highest selection until it is released, then the other takes over
@@ -21,6 +21,7 @@ class NoteRouter
 {
 public:
     enum class BassRule { newest, lowest };
+    enum class LeadRule { newest, highest };
     enum class Change { none, attack, release, retarget };
     struct Changes { Change bass = Change::none, lead = Change::none; };
     struct Key
@@ -38,6 +39,14 @@ public:
         return reselect(previous, leadKey()).bass;
     }
 
+    // Returns Blade's change when its rule moves its note (solo on or off).
+    Change setLeadRule(LeadRule rule) noexcept
+    {
+        const auto previous = leadKey();
+        leadRule = rule;
+        return reselect(bassKey(), previous).lead;
+    }
+
     Changes noteOn(int channel, int note, int velocity) noexcept
     {
         if (!valid(channel, note)) return {};
@@ -50,7 +59,7 @@ public:
             {
                 // Under the pitch rules a repeat keeps its place among equal
                 // pitches; only its velocity changes. Newest moves it last.
-                if (bassRule == BassRule::newest) { erase(i); held[count++] = key; }
+                if (bassRule == BassRule::newest || leadRule == LeadRule::newest) { erase(i); held[count++] = key; }
                 else held[i].velocity = key.velocity;
                 auto changes = reselect(previousBass, previousLead);
                 // A repeated press of a selected key articulates it again.
@@ -142,21 +151,22 @@ private:
     Changes reselect(const Key& previousBass, const Key& previousLead) noexcept
     {
         bassIndex = bassRule == BassRule::newest && count > 0 ? count - 1 : 0;
-        leadIndex = 0;
+        leadIndex = leadRule == LeadRule::newest && count > 0 ? count - 1 : 0;
         for (std::size_t i = 1; i < count; ++i)
         {
             if (bassRule == BassRule::lowest && held[i].note < held[bassIndex].note) bassIndex = i;
-            if (held[i].note > held[leadIndex].note) leadIndex = i;
+            if (leadRule == LeadRule::highest && held[i].note > held[leadIndex].note) leadIndex = i;
         }
         // Under the newest rule a same-pitch handover is a different key
         // taking over, so it attacks; pitch rules only move bend ownership.
         return {classify(previousBass, bassKey(), bassRule == BassRule::newest),
-                classify(previousLead, leadKey(), false)};
+                classify(previousLead, leadKey(), leadRule == LeadRule::newest)};
     }
 
     // At most one entry per MIDI channel and key, so this can never overflow.
     std::array<Key, 16 * 128> held{};
     std::size_t count = 0, bassIndex = 0, leadIndex = 0;
     BassRule bassRule = BassRule::lowest;
+    LeadRule leadRule = LeadRule::highest;
 };
 }

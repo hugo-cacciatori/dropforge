@@ -186,6 +186,16 @@ private:
     dsp_core::LinearRamp leadPower, leadMixLevel, leadBendOffset;
     double leadMixTarget = 1.0;
     void updateLead(NoteRouter::Change change) noexcept;
+    // The solo rule (SPEC section 3): an instrument playing alone follows the
+    // newest key; with another instrument on, Anvil the lowest, Blade the highest.
+    NoteRouter::BassRule bassRule() const noexcept
+    {
+        return rhythmEnabled || leadEnabled ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest;
+    }
+    NoteRouter::LeadRule leadRule() const noexcept
+    {
+        return rhythmEnabled || bassEnabled ? NoteRouter::LeadRule::highest : NoteRouter::LeadRule::newest;
+    }
     void startBass(BassVoice& voice) noexcept;
     void startRhythm(int channel, int note, int velocity) noexcept;
     void startHeldRhythm(FurnaceLayer& furnace) noexcept;

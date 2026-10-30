@@ -6,7 +6,7 @@ Play chords with one hand and Dropforge turns them into a full part:
 
 | Layer | What it plays | Sound |
 |---|---|---|
-| **Anvil** | The lowest note you hold, one octave down | A clean, round sub-bass with a growl on top, perfectly centred |
+| **Anvil** | The lowest note you hold, one octave down (alone, it follows the newest note) | A clean, round sub-bass with a growl on top, perfectly centred |
 | **Furnace** | Every note you hold | The big, wide, aggressive chord wall: the part rhythm guitars play in a metal mix |
 | **Blade** *(coming)* | The highest note you hold | A cutting mono lead that doubles your top note |
 

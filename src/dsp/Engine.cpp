@@ -54,7 +54,8 @@ void Engine::reset() noexcept
     bassChannel = 1;
     bassBendOffset.reset(0.0);
     router.reset();
-    router.setBassRule(rhythmEnabled ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
+    router.setBassRule(bassRule());
+    router.setLeadRule(leadRule());
     bassMixLevel.reset(bassMixTarget);
     rhythmMixLevel.reset(rhythmMixTarget);
     bassPower.reset(bassEnabled ? 1.0 : 0.0);
@@ -169,7 +170,9 @@ void Engine::setLayersEnabled(bool bass, bool rhythm) noexcept
     const auto rhythmWasEnabled = rhythmEnabled;
     bassEnabled = bass;
     rhythmEnabled = rhythm;
-    const auto change = router.setBassRule(rhythm ? NoteRouter::BassRule::lowest : NoteRouter::BassRule::newest);
+    const auto change = router.setBassRule(bassRule());
+    // Turning Anvil or Furnace on or off can solo Blade or end its solo.
+    updateLead(router.setLeadRule(leadRule()));
     for (auto& furnace : furnaces) furnace.setAnvilPresent(bass, rhythmSuspended);
     if (bass != bassWasEnabled)
     {
@@ -383,12 +386,16 @@ void Engine::setLeadEnabled(bool on) noexcept
     if (on == leadEnabled) return;
     leadEnabled = on;
     leadPower.setTarget(on ? 1.0 : 0.0, fadeSamples);
+    // Blade joining or leaving can solo Anvil or end its solo.
+    updateBass(router.setBassRule(bassRule()));
+    const auto leadChange = router.setLeadRule(leadRule());
     if (on)
     {
         leadSuspended = false;
         leadKeyHeld = false; // re-entry is a fresh attack, never a slide
         updateLead(router.leadKey().held() ? NoteRouter::Change::attack : NoteRouter::Change::release);
     }
+    else updateLead(leadChange);
 }
 
 void Engine::setLeadLevel(float db) noexcept
