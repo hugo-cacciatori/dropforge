@@ -7,7 +7,8 @@
 #include <iostream>
 #include <vector>
 
-// The FX page's chain (SPEC section 8): sends, the ducked Delay, tempo, tails.
+// The FX page's chain (SPEC section 8): sends, the ducked Delay and Reverb,
+// Space, tempo, tails.
 namespace
 {
 using dropforge::FxChain;
@@ -231,12 +232,141 @@ void retimeAndTails()
     require(!chain.active(), "a drained tail returns the chain to bypass");
 }
 
+
+FxChain::Settings roomOnly(float decay)
+{
+    FxChain::Settings s;
+    s.reverbOn = true;
+    s.reverbMix = 1.0f;
+    s.duck = 0.0f;
+    s.reverb.decaySeconds = decay;
+    s.reverb.preDelayMs = 0.0f;
+    s.reverb.damping = 0.0f;
+    s.reverb.lowCutHz = 20.0f;
+    s.reverb.highCutHz = 20000.0f;
+    return s;
+}
+// RT60 from an impulse: the time the 10 ms level takes to fall from 10 dB to
+// 40 dB under its loudest, doubled.
+double decayTime(const std::vector<float>& audio)
+{
+    std::vector<double> levels;
+    for (std::size_t at = 0; at + 480 <= audio.size(); at += 480) levels.push_back(rmsDb(audio, at, at + 480));
+    const auto top = *std::max_element(levels.begin(), levels.end());
+    const auto peakAt = static_cast<std::size_t>(std::max_element(levels.begin(), levels.end()) - levels.begin());
+    double first = -1.0, second = -1.0;
+    for (auto i = peakAt; i < levels.size(); ++i)
+    {
+        if (first < 0.0 && levels[i] < top - 10.0) first = static_cast<double>(i);
+        if (second < 0.0 && levels[i] < top - 40.0) { second = static_cast<double>(i); break; }
+    }
+    return second > 0.0 && first > 0.0 ? 2.0 * (second - first) * 0.01 : -1.0;
+}
+
+void reverbRoom()
+{
+    for (const float decay : {0.8f, 3.0f})
+    {
+        FxChain chain;
+        chain.set(roomOnly(decay), 120.0);
+        chain.prepare(rate);
+        Input input{std::vector<float>(static_cast<std::size_t>(rate * (decay * 1.5 + 0.5))), {}};
+        input.furnace[0] = 1.0f;
+        const auto measured = decayTime(run(chain, input).left);
+        std::cout << "reverb decay set=" << decay << " measured=" << measured << '\n';
+        require(measured > 0.7 * decay && measured < 1.3 * decay, "the tail falls 60 dB in about the Decay time");
+    }
+    // Pre-delay: silence first, then the room.
+    {
+        auto s = roomOnly(0.8f);
+        s.reverb.preDelayMs = 100.0f;
+        FxChain chain;
+        chain.set(s, 120.0);
+        chain.prepare(rate);
+        Input input{std::vector<float>(24000), {}};
+        input.furnace[0] = 1.0f;
+        const auto out = run(chain, input);
+        float early = 0.0f;
+        for (std::size_t i = 0; i < 4560; ++i) early = std::max(early, std::abs(out.left[i]));
+        require(early < 1e-6f && rmsDb(out.left, 4800, 9600) > -60.0, "the room starts after its pre-delay");
+    }
+    // The longest, brightest, most modulated room stays bounded and finite.
+    {
+        auto s = roomOnly(15.0f);
+        s.reverb.size = 1.0f; s.reverb.modulation = 1.0f; s.reverb.diffusion = 1.0f;
+        FxChain chain;
+        chain.set(s, 120.0);
+        chain.prepare(rate);
+        Input input{noise(static_cast<std::size_t>(rate * 20.0)), {}};
+        std::fill(input.furnace.begin() + static_cast<std::ptrdiff_t>(rate), input.furnace.end(), 0.0f);
+        const auto out = run(chain, input);
+        float peak = 0.0f;
+        for (const auto v : out.left) { require(std::isfinite(v), "finite at 15 s decay"); peak = std::max(peak, std::abs(v)); }
+        std::cout << "reverb 15 s peak=" << peak << '\n';
+        require(peak < 4.0f, "a 15 s room stays bounded");
+    }
+    // Width: 0 folds the room to the centre; 100 % keeps two different sides.
+    const auto sides = [](float width)
+    {
+        auto s = roomOnly(1.5f);
+        s.reverb.width = width;
+        FxChain chain;
+        chain.set(s, 120.0);
+        chain.prepare(rate);
+        Input input{noise(9600), {}};
+        input.furnace.resize(48000);
+        return run(chain, input);
+    };
+    const auto mono = sides(0.0f), wide = sides(1.0f);
+    require(mono.left == mono.right, "Width 0 is exactly centred");
+    double lr = 0.0, ll = 0.0, rr = 0.0;
+    for (std::size_t i = 12000; i < 48000; ++i) { lr += wide.left[i] * wide.right[i]; ll += wide.left[i] * wide.left[i]; rr += wide.right[i] * wide.right[i]; }
+    std::cout << "reverb correlation=" << lr / std::sqrt(ll * rr) << '\n';
+    require(std::abs(lr / std::sqrt(ll * rr)) < 0.5, "full Width gives two decorrelated sides");
+    std::cout << "reverb decay, pre-delay, stability and width passed\n";
+}
+
+// Space scales both wets; the reverb never hears the delay.
+void spaceAndRouting()
+{
+    const auto size = static_cast<std::size_t>(rate * 2.0);
+    Input input{noise(size), sine(110.0, size, 0.2f)};
+    for (std::size_t i = size / 2; i < size; ++i) input.furnace[i] = 0.0f;
+    const auto wet = [&](bool delayOn, bool reverbOn, float space)
+    {
+        FxChain::Settings s;
+        s.delayOn = delayOn; s.reverbOn = reverbOn; s.space = space; s.duck = 0.0f;
+        FxChain chain;
+        chain.set(s, 120.0);
+        chain.prepare(rate);
+        auto out = run(chain, input);
+        for (std::size_t i = 0; i < size; ++i) out.left[i] -= input.dry[i];
+        return out.left;
+    };
+    FxChain::Settings dryOnly;
+    dryOnly.delayOn = dryOnly.reverbOn = true; dryOnly.space = 0.0f;
+    FxChain silentChain;
+    silentChain.set(dryOnly, 120.0);
+    silentChain.prepare(rate);
+    const auto none = run(silentChain, input);
+    require(none.left == input.dry && none.right == input.dry, "Space 0 leaves only the dry sound");
+    const auto half = wet(true, true, 0.5f), full = wet(true, true, 1.0f);
+    const auto lift = rmsDb(full, 0, size) - rmsDb(half, 0, size);
+    std::cout << "space full vs half db=" << lift << '\n';
+    require(std::abs(lift - 6.02) < 0.1, "Space at 100 % doubles both wets");
+    const auto both = wet(true, true, 0.5f), delayOnly = wet(true, false, 0.5f), roomWet = wet(false, true, 0.5f);
+    double worst = 0.0;
+    for (std::size_t i = 0; i < size; ++i) worst = std::max(worst, static_cast<double>(std::abs(both[i] - delayOnly[i] - roomWet[i])));
+    require(worst < 1e-5, "the reverb and the delay run side by side: the reverb never hears the echoes");
+}
+
 void blockInvariance()
 {
     const auto render = [](int block)
     {
         auto s = echoOnly();
         s.delayFeedback = 0.5f; s.duck = 0.5f; s.delayPingPong = true; s.delayWidth = 0.7f;
+        s.reverbOn = true; s.reverb.modulation = 0.8f; s.reverb.preDelayMs = 37.0f;
         FxChain chain;
         chain.set(s, 128.0);
         chain.prepare(rate);
@@ -292,6 +422,8 @@ int main()
     feedbackAndFilters();
     ducking();
     retimeAndTails();
+    reverbRoom();
+    spaceAndRouting();
     blockInvariance();
     instrument();
     std::cout << "fx passed\n";

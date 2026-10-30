@@ -50,4 +50,16 @@ inline constexpr auto fxDelayWidth = "fx_delay_width";
 inline constexpr auto fxDelayMix = "fx_delay_mix";
 inline constexpr auto fxDelayLowCut = "fx_delay_low_cut";
 inline constexpr auto fxDelayHighCut = "fx_delay_high_cut";
+inline constexpr auto fxReverbOn = "fx_reverb_on";
+inline constexpr auto fxReverbDecay = "fx_reverb_decay";
+inline constexpr auto fxReverbPreDelay = "fx_reverb_predelay";
+inline constexpr auto fxReverbSize = "fx_reverb_size";
+inline constexpr auto fxReverbDiffusion = "fx_reverb_diffusion";
+inline constexpr auto fxReverbDamping = "fx_reverb_damping";
+inline constexpr auto fxReverbModulation = "fx_reverb_mod";
+inline constexpr auto fxReverbWidth = "fx_reverb_width";
+inline constexpr auto fxReverbMix = "fx_reverb_mix";
+inline constexpr auto fxReverbLowCut = "fx_reverb_low_cut";
+inline constexpr auto fxReverbHighCut = "fx_reverb_high_cut";
+inline constexpr auto spaceAmount = "space_amount";
 }

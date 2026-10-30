@@ -126,6 +126,11 @@ Options parse(int argc, char** argv)
             if (mode != "stereo" && mode != "pingpong") throw std::runtime_error("Delay mode must be stereo or pingpong");
             options.fx.delayPingPong = mode == "pingpong";
         }
+        else if (flag == "--reverb") options.fx.reverbOn = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--reverb-decay") options.fx.reverb.decaySeconds = static_cast<float>(std::clamp(number(argv[i + 1]), 0.1, 15.0));
+        else if (flag == "--reverb-predelay") options.fx.reverb.preDelayMs = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 500.0));
+        else if (flag == "--reverb-mix") options.fx.reverbMix = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
+        else if (flag == "--space") options.fx.space = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--duck") options.fx.duck = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--send-anvil") options.fx.sendAnvil = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
         else if (flag == "--send-furnace") options.fx.sendFurnace = static_cast<float>(std::clamp(number(argv[i + 1]), 0.0, 100.0) / 100.0);
@@ -400,6 +405,7 @@ void render(const Options& options)
     metrics->setProperty("wheel_amount", options.wheelAmount);
     metrics->setProperty("roar_scale", options.roarScale);
     metrics->setProperty("fx_delay", options.fx.delayOn);
+    metrics->setProperty("fx_reverb", options.fx.reverbOn);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -446,6 +452,7 @@ int main(int argc, char** argv)
                      "  [--bpm 120] (default: the MIDI file's tempo) [--send-anvil 0] [--send-furnace 100] [--send-blade 60] [--duck 50]\n"
                      "  [--delay 0|1] [--delay-sync 0|1] [--delay-division 1/8] [--delay-feel straight|dotted|triplet]\n"
                      "  [--delay-ms 375] [--delay-feedback 25] [--delay-mix 25] [--delay-mode stereo|pingpong] (percentages 0-100)\n"
+                     "  [--reverb 0|1] [--reverb-decay 0.8] [--reverb-predelay 20] [--reverb-mix 20] [--space 50]\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

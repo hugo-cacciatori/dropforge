@@ -1,4 +1,5 @@
 #include "dsp/Engine.h"
+#include "dsp/FxChain.h"
 #include "dsp/Master.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
@@ -24,7 +25,7 @@ int main(int argc, char** argv)
     using Clock = std::chrono::steady_clock;
     constexpr int trials = 5, maximumBlockSize = 8192;
     int blockSize = 512, sampleRate = 48000;
-    bool haveRate = false, haveBlock = false, haveAnvil = false, haveFurnace = false, haveDestroy = false, destroy = false, haveBlade = false, blade = true, haveLead = false, haveRoar = false, roar = false;
+    bool haveRate = false, haveBlock = false, haveAnvil = false, haveFurnace = false, haveDestroy = false, destroy = false, haveBlade = false, blade = true, haveLead = false, haveRoar = false, roar = false, haveFx = false, fx = false;
     int anvilMode = 0, furnaceMode = 0, leadMode = 0;
     // A single letter a-d names a mode (SPEC section 12); -1 otherwise.
     const auto modeLetter = [](std::string_view text) noexcept
@@ -35,7 +36,7 @@ int main(int argc, char** argv)
     {
         const std::string_view option = argv[i];
         if (i + 1 >= argc
-            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil" && option != "--furnace" && option != "--destroy" && option != "--blade" && option != "--lead" && option != "--roar")
+            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil" && option != "--furnace" && option != "--destroy" && option != "--blade" && option != "--lead" && option != "--roar" && option != "--fx")
             || (option == "--sample-rate" && (haveRate || !readInteger(argv[i + 1], sampleRate)))
             || (option == "--block-size" && (haveBlock || !readInteger(argv[i + 1], blockSize)))
             || (option == "--anvil" && (haveAnvil || modeLetter(argv[i + 1]) < 0))
@@ -43,9 +44,10 @@ int main(int argc, char** argv)
             || (option == "--lead" && (haveLead || modeLetter(argv[i + 1]) < 0))
             || (option == "--destroy" && (haveDestroy || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1")))
             || (option == "--blade" && (haveBlade || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1")))
-            || (option == "--roar" && (haveRoar || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1"))))
+            || (option == "--roar" && (haveRoar || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1")))
+            || (option == "--fx" && (haveFx || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1"))))
         {
-            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a-d] [--furnace a-d] [--lead a-d] [--destroy 0|1] [--blade 1|0] [--roar 0|1]\n";
+            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a-d] [--furnace a-d] [--lead a-d] [--destroy 0|1] [--blade 1|0] [--roar 0|1] [--fx 0|1]\n";
             return 2;
         }
         if (option == "--sample-rate") haveRate = true;
@@ -55,6 +57,7 @@ int main(int argc, char** argv)
         else if (option == "--lead") { haveLead = true; leadMode = modeLetter(argv[i + 1]); }
         else if (option == "--destroy") { haveDestroy = true; destroy = std::string_view(argv[i + 1]) == "1"; }
         else if (option == "--roar") { haveRoar = true; roar = std::string_view(argv[i + 1]) == "1"; }
+        else if (option == "--fx") { haveFx = true; fx = std::string_view(argv[i + 1]) == "1"; }
         else { haveBlade = true; blade = std::string_view(argv[i + 1]) == "1"; }
     }
     if (sampleRate < 44100 || sampleRate > 192000 || blockSize < 1 || blockSize > maximumBlockSize)
@@ -69,6 +72,9 @@ int main(int argc, char** argv)
     const int warmupBlocks = static_cast<int>(std::ceil(2.0 * rate / blockSize));
     juce::ScopedNoDenormals noDenormals;
     std::array<float, maximumBlockSize> left{}, right{};
+    // The FX section's sends read each instrument (SPEC section 8).
+    static std::array<std::array<float, maximumBlockSize>, 5> taps{};
+    const dropforge::LayerTaps layerTaps{taps[0].data(), taps[1].data(), taps[2].data(), taps[3].data(), taps[4].data()};
     std::array<double, trials> elapsed{};
     double peak = 0.0, energy = 0.0, worstBlockMs = 0.0;
     int overDeadline = 0;
@@ -76,6 +82,12 @@ int main(int argc, char** argv)
     {
         dropforge::Engine engine;
         dropforge::Master master; // the full instrument: voices plus master chain
+        // --fx 1: the Delay and Reverb on at their defaults, every send at its default.
+        dropforge::FxChain effects;
+        dropforge::FxChain::Settings fxSettings;
+        fxSettings.delayOn = fxSettings.reverbOn = fx;
+        effects.set(fxSettings, 120.0);
+        effects.prepare(rate);
         engine.setLayersEnabled(true, true);
         engine.setAnvilMode(anvilMode);
         engine.setFurnaceMode(furnaceMode);
@@ -95,17 +107,18 @@ int main(int argc, char** argv)
         const auto targets = engine.rhythmTargets();
         if (std::count_if(targets.begin(), targets.end(), [](auto v) { return v.held; }) != 8
             || engine.bassTarget().note != 40) return 1;
-        for (int i = 0; i < warmupBlocks; ++i)
+        const auto block = [&]
         {
-            engine.process(left.data(), right.data(), blockSize);
+            engine.process(left.data(), right.data(), blockSize, dropforge::LayerMask::all, fx ? layerTaps : dropforge::LayerTaps{});
+            if (fx) effects.process(left.data(), right.data(), layerTaps, dropforge::LayerMask::all, blockSize);
             master.process(left.data(), right.data(), blockSize);
-        }
+        };
+        for (int i = 0; i < warmupBlocks; ++i) block();
         double seconds = 0.0;
         for (int i = 0; i < blocks; ++i)
         {
             const auto start = Clock::now();
-            engine.process(left.data(), right.data(), blockSize);
-            master.process(left.data(), right.data(), blockSize);
+            block();
             const auto duration = std::chrono::duration<double>(Clock::now() - start).count();
             seconds += duration;
             worstBlockMs = std::max(worstBlockMs, duration * 1000.0);

@@ -5,12 +5,14 @@
 #include <cmath>
 #include "Engine.h"
 #include "FxDelay.h"
+#include "FxReverb.h"
 
 namespace dropforge
 {
 // The FX page's chain between the instruments and the master (SPEC section 8).
 // Each instrument sends its finished signal (after power and Level) to the
-// delay; the echoes return in parallel with the dry mix and duck under it, so
+// delay and the reverb side by side (the reverb never hears the echoes); both
+// return in parallel with the dry mix and duck under it, so
 // chops stay hard and tails bloom in the gaps. While every effect is off and
 // its tail has drained the chain does nothing at all: the dry sound is
 // bit-identical to a build without it.
@@ -29,6 +31,12 @@ public:
         Feel delayFeel = Feel::dotted;
         float delayMs = 375.0f, delayFeedback = 0.25f, delayWidth = 1.0f, delayMix = 0.25f;
         float delayLowCutHz = 280.0f, delayHighCutHz = 6500.0f;
+        bool reverbOn = false;
+        FxReverb::Settings reverb{};
+        float reverbMix = 0.2f;
+        // Space (0-1): both wets at once; 0.5 plays them as set, 0 dry,
+        // 1 doubles them.
+        float space = 0.5f;
     };
     // The synced or free delay time in seconds at this tempo.
     static double delaySeconds(const Settings& settings, double bpm) noexcept
@@ -46,6 +54,7 @@ public:
     {
         rate = sampleRate;
         delay.prepare(rate);
+        reverb.prepare(rate);
         fadeStep = static_cast<float>(1.0 / std::ceil(rate * 0.030));
         smoothing = static_cast<float>(1.0 - std::exp(-1.0 / (0.005 * rate)));
         // Ducking: a 1 ms attack so a chop pulls the echoes down at once, a
@@ -59,7 +68,11 @@ public:
     void reset() noexcept
     {
         delay.reset();
+        reverb.reset();
         delayInput = settings.delayOn ? 1.0f : 0.0f;
+        reverbInput = settings.reverbOn ? 1.0f : 0.0f;
+        reverbMix = settings.reverbMix;
+        space = settings.space;
         sends = {settings.sendAnvil, settings.sendFurnace, settings.sendBlade};
         mix = settings.delayMix;
         duck = settings.duck;
@@ -72,9 +85,10 @@ public:
         bpm = hostBpm;
         delay.set({delaySeconds(settings, bpm), settings.delayFeedback, settings.delayWidth, settings.delayLowCutHz,
                    settings.delayHighCutHz, settings.delayPingPong});
+        reverb.set(settings.reverb);
     }
     // Something to do: an effect on, or a tail still draining.
-    bool active() const noexcept { return settings.delayOn || running; }
+    bool active() const noexcept { return settings.delayOn || settings.reverbOn || running; }
 
     // Adds the returns to the dry mix in left/right. The taps hold each
     // instrument's signal for the same samples; mask says which instruments
@@ -84,39 +98,49 @@ public:
         if (!active()) return;
         running = true;
         const auto bits = static_cast<unsigned>(mask);
-        const auto target = settings.delayOn ? 1.0f : 0.0f;
+        const auto target = settings.delayOn ? 1.0f : 0.0f, reverbTarget = settings.reverbOn ? 1.0f : 0.0f;
+        const auto fade = [this](float& value, float goal) noexcept
+        {
+            value = goal > value ? std::min(goal, value + fadeStep) : std::max(goal, value - fadeStep);
+        };
         for (int i = 0; i < count; ++i)
         {
-            delayInput = target > delayInput ? std::min(target, delayInput + fadeStep) : std::max(target, delayInput - fadeStep);
+            fade(delayInput, target);
+            fade(reverbInput, reverbTarget);
             sends[0] += smoothing * (settings.sendAnvil - sends[0]);
             sends[1] += smoothing * (settings.sendFurnace - sends[1]);
             sends[2] += smoothing * (settings.sendBlade - sends[2]);
             mix += smoothing * (settings.delayMix - mix);
+            reverbMix += smoothing * (settings.reverbMix - reverbMix);
+            space += smoothing * (settings.space - space);
             duck += smoothing * (settings.duck - duck);
             auto sendLeft = 0.0f, sendRight = 0.0f;
             if ((bits & 1u) != 0) { sendLeft += sends[0] * taps.bassLeft[i]; sendRight += sends[0] * taps.bassRight[i]; }
             if ((bits & 2u) != 0) { sendLeft += sends[1] * taps.rhythmLeft[i]; sendRight += sends[1] * taps.rhythmRight[i]; }
             if ((bits & 4u) != 0) { sendLeft += sends[2] * taps.lead[i]; sendRight += sends[2] * taps.lead[i]; }
             const auto echo = delay.process(delayInput * sendLeft, delayInput * sendRight);
+            const auto room = reverb.process(reverbInput * sendLeft, reverbInput * sendRight);
             // The follower hears the dry mix; at full Ducking a loud dry
             // signal (about -12 dBFS and up) pulls the returns down 20 dB.
             const auto level = std::max(std::abs(left[i]), std::abs(right[i]));
             follower += (level > follower ? attack : release) * (level - follower);
-            const auto gain = mix * (1.0f - 0.9f * duck * std::min(1.0f, 4.0f * follower));
-            left[i] += gain * echo.left;
-            right[i] += gain * echo.right;
+            const auto ducked = 2.0f * space * (1.0f - 0.9f * duck * std::min(1.0f, 4.0f * follower));
+            left[i] += ducked * (mix * echo.left + reverbMix * room.left);
+            right[i] += ducked * (mix * echo.right + reverbMix * room.right);
         }
         // Off, faded and drained: back to the bypass, with the lines cleared
         // so the next start is exactly like the first.
-        if (!settings.delayOn && delayInput == 0.0f && delay.silent()) reset();
+        if (!settings.delayOn && !settings.reverbOn && delayInput == 0.0f && reverbInput == 0.0f && delay.silent() && reverb.silent())
+            reset();
     }
 
 private:
     FxDelay delay;
+    FxReverb reverb;
     Settings settings{};
     std::array<float, 3> sends{};
     double rate = 48000.0, bpm = 120.0;
-    float delayInput = 0.0f, mix = 0.25f, duck = 0.5f, follower = 0.0f;
+    float delayInput = 0.0f, reverbInput = 0.0f, mix = 0.25f, reverbMix = 0.2f, space = 0.5f, duck = 0.5f, follower = 0.0f;
     float fadeStep = 0.001f, smoothing = 0.004f, attack = 0.02f, release = 1e-4f;
     bool running = false;
 };

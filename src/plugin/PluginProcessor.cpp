@@ -123,6 +123,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     percent(fx::fxDelayMix, "Delay Mix", 100.0f, 25.0f);
     skewed(fx::fxDelayLowCut, "Delay Low Cut", 20.0f, 2000.0f, 250.0f, 280.0f, "Hz");
     skewed(fx::fxDelayHighCut, "Delay High Cut", 1000.0f, 20000.0f, 6000.0f, 6500.0f, "Hz");
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxReverbOn, 1}, "Reverb", false));
+    skewed(fx::fxReverbDecay, "Reverb Decay", 0.1f, 15.0f, 2.0f, 0.8f, "s");
+    skewed(fx::fxReverbPreDelay, "Reverb Pre-delay", 0.0f, 500.0f, 80.0f, 20.0f, "ms");
+    percent(fx::fxReverbSize, "Reverb Size", 100.0f, 60.0f);
+    percent(fx::fxReverbDiffusion, "Reverb Diffusion", 100.0f, 80.0f);
+    percent(fx::fxReverbDamping, "Reverb Damping", 100.0f, 40.0f);
+    percent(fx::fxReverbModulation, "Reverb Modulation", 100.0f, 30.0f);
+    percent(fx::fxReverbWidth, "Reverb Width", 100.0f, 100.0f);
+    percent(fx::fxReverbMix, "Reverb Mix", 100.0f, 20.0f);
+    skewed(fx::fxReverbLowCut, "Reverb Low Cut", 20.0f, 2000.0f, 250.0f, 250.0f, "Hz");
+    skewed(fx::fxReverbHighCut, "Reverb High Cut", 1000.0f, 20000.0f, 6000.0f, 7000.0f, "Hz");
+    percent(fx::spaceAmount, "Space", 100.0f, 50.0f);
     return layout;
 }
 
@@ -156,9 +168,12 @@ DropforgeProcessor::DropforgeProcessor()
     wheelAmountValue = state.getRawParameterValue(dropforge::parameters::wheelAmount);
     {
         namespace fx = dropforge::parameters;
-        const std::array<const char*, 15> ids{fx::fxSendAnvil, fx::fxSendFurnace, fx::fxSendBlade, fx::fxDuck, fx::fxDelayOn, fx::fxDelaySync,
+        const std::array<const char*, 27> ids{fx::fxSendAnvil, fx::fxSendFurnace, fx::fxSendBlade, fx::fxDuck, fx::fxDelayOn, fx::fxDelaySync,
                                               fx::fxDelayDivision, fx::fxDelayFeel, fx::fxDelayMs, fx::fxDelayFeedback, fx::fxDelayMode,
-                                              fx::fxDelayWidth, fx::fxDelayMix, fx::fxDelayLowCut, fx::fxDelayHighCut};
+                                              fx::fxDelayWidth, fx::fxDelayMix, fx::fxDelayLowCut, fx::fxDelayHighCut,
+                                              fx::fxReverbOn, fx::fxReverbDecay, fx::fxReverbPreDelay, fx::fxReverbSize, fx::fxReverbDiffusion,
+                                              fx::fxReverbDamping, fx::fxReverbModulation, fx::fxReverbWidth, fx::fxReverbMix,
+                                              fx::fxReverbLowCut, fx::fxReverbHighCut, fx::spaceAmount};
         for (std::size_t i = 0; i < ids.size(); ++i) fxValues[i] = state.getRawParameterValue(ids[i]);
     }
     core.setLayersEnabled(true, true);
@@ -270,6 +285,11 @@ void DropforgeProcessor::applyFx() noexcept
     settings.delayMix = value(12, 25.0f) / 100.0f;
     settings.delayLowCutHz = value(13, 280.0f);
     settings.delayHighCutHz = value(14, 6500.0f);
+    settings.reverbOn = value(15, 0.0f) >= 0.5f;
+    settings.reverb = {value(16, 0.8f), value(17, 20.0f), value(18, 60.0f) / 100.0f, value(19, 80.0f) / 100.0f, value(20, 40.0f) / 100.0f,
+                       value(21, 30.0f) / 100.0f, value(22, 100.0f) / 100.0f, value(24, 250.0f), value(25, 7000.0f)};
+    settings.reverbMix = value(23, 20.0f) / 100.0f;
+    settings.space = value(26, 50.0f) / 100.0f;
     double bpm = 120.0;
     if (auto* head = getPlayHead())
         if (const auto position = head->getPosition())
