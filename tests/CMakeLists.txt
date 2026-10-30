@@ -10,6 +10,12 @@ add_executable(dropforge_mode_tests ModeTests.cpp)
 target_link_libraries(dropforge_mode_tests PRIVATE dropforge_core)
 add_test(NAME mode_switching COMMAND dropforge_mode_tests)
 
+# Blade, the lead (SPEC sections 3, 4).
+add_executable(dropforge_blade_tests BladeTests.cpp)
+target_link_libraries(dropforge_blade_tests PRIVATE dropforge_core)
+add_test(NAME blade_voice COMMAND dropforge_blade_tests)
+set_tests_properties(blade_voice PROPERTIES TIMEOUT 300)
+
 # Gates for every Anvil x Furnace mode pair, clean and destroyed (SPEC section 12).
 add_executable(dropforge_combination_tests CombinationTests.cpp)
 target_include_directories(dropforge_combination_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")

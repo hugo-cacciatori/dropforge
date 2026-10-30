@@ -8,6 +8,7 @@
 #include <dsp_core/MultibandDynamics.h>
 #include <dsp_core/Svf.h>
 #include "BassVoice.h"
+#include "BladeVoice.h"
 #include "FurnaceDesign.h"
 #include "FurnaceLayer.h"
 #include "NoteRouter.h"
@@ -18,7 +19,8 @@ namespace dropforge
 {
 // Diagnostic contribution masks, not user-facing routing/enables. All synthesis
 // and MIDI state advances even when a contribution is omitted from the output.
-enum class LayerMask : unsigned { none = 0, bass = 1, rhythm = 2, both = 3 };
+// `both` is Anvil + Furnace (the M1 pair the diagnostics were built on); `all` adds Blade.
+enum class LayerMask : unsigned { none = 0, bass = 1, rhythm = 2, both = 3, lead = 4, all = 7 };
 struct LayerTaps
 {
     // Optional, caller-owned non-aliasing buffers of numSamples floats each.
@@ -27,6 +29,7 @@ struct LayerTaps
     float* bassRight = nullptr;
     float* rhythmLeft = nullptr;
     float* rhythmRight = nullptr;
+    float* lead = nullptr; // Blade is exactly mono: one tap serves both sides
 };
 
 // Eight stereo Furnace voices, the mono Anvil voice and Blade's note slot
@@ -52,6 +55,14 @@ public:
     void reset() noexcept;
     void setLayersEnabled(bool bass, bool rhythm) noexcept;
     void setLayerLevels(float bassDb, float rhythmDb) noexcept;
+    // Blade (SPEC section 3): the highest held key, off by default. Keys are
+    // tracked while it is off, so switching it on during a chord plays at once.
+    void setLeadEnabled(bool on) noexcept;
+    void setLeadLevel(float db) noexcept;
+    // Blade's weight against Furnace at default Levels (SPEC section 4): in
+    // front but not louder. -13 dB puts a held top note about 3 LU under the
+    // reference chord's wall; tuned by ear in listening round 3.
+    static constexpr double bladeBalance = 0.22387211385683395; // -13 dB
     void setBassParameters(float splitHz, float drive) noexcept
     {
         splitTarget = splitHz; driveTarget = drive;
@@ -107,7 +118,7 @@ public:
     // tests and meters.
     float furnaceBandGainDb(int band) const noexcept { return furnaces[furnaceSlot].bandGainDb(band); }
     void process(float* left, float* right, int numSamples,
-                 LayerMask outputMask = LayerMask::both, LayerTaps taps = {},
+                 LayerMask outputMask = LayerMask::all, LayerTaps taps = {},
                  BassComponent component = BassComponent::all) noexcept;
 
 private:
@@ -140,6 +151,12 @@ private:
     int bassChannel = 1; // Retain selected bend during the note-off release.
     NoteRouter router;
     void updateBass(NoteRouter::Change change) noexcept;
+    BladeVoice blade;
+    bool leadEnabled = false, leadSuspended = true;
+    int leadChannel = 1;
+    dsp_core::LinearRamp leadPower, leadMixLevel, leadBendOffset;
+    double leadMixTarget = 1.0;
+    void updateLead(NoteRouter::Change change) noexcept;
     void startBass(BassVoice& voice) noexcept;
     void startRhythm(int channel, int note, int velocity) noexcept;
     void startHeldRhythm(FurnaceLayer& furnace) noexcept;
@@ -159,6 +176,6 @@ private:
     // and the Furnace sum with its strongest envelope and velocity.
     using Block = std::array<double, controlBlock>;
     std::array<Block, 16> bendRatio{};
-    Block rhythmGain{}, bassGain{}, rhythmLeft{}, rhythmRight{}, outgoingLeft{}, outgoingRight{};
+    Block rhythmGain{}, bassGain{}, leadGain{}, rhythmLeft{}, rhythmRight{}, outgoingLeft{}, outgoingRight{};
 };
 }

@@ -19,4 +19,7 @@ inline constexpr auto rhythmDrop = "rhythm_drop";
 // Destruction per instrument (SPEC section 12).
 inline constexpr auto bassDestroy = "bass_destroy";
 inline constexpr auto rhythmDestroy = "rhythm_destroy";
+// Blade, the lead (SPEC section 3): off by default.
+inline constexpr auto leadEnabled = "lead_on";
+inline constexpr auto leadLevel = "lead_level";
 }

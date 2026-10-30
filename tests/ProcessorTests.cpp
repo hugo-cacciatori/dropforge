@@ -130,7 +130,8 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 11, "output; power, level, mode and Destruction for each layer; Furnace Mono and Drop");
+    require(source.getParameters().size() == 13, "output; power, level, mode and Destruction for Anvil and Furnace; Furnace Mono and Drop; Blade power and level");
+    require(!toggle(source, dropforge::parameters::leadEnabled), "Blade is off by default");
     for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode})
     {
         const auto* mode = dynamic_cast<juce::AudioParameterChoice*>(source.parameterState().getParameter(id));

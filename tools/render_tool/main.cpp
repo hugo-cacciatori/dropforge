@@ -17,11 +17,11 @@ struct Options
     juce::File input, wav, metrics;
     int rate = 48000, block = 512;
     double tail = 0.1;
-    float outputDb = 0.0f, anvilLevelDb = 0.0f;
+    float outputDb = 0.0f, anvilLevelDb = 0.0f, bladeLevelDb = 0.0f;
     float splitHz = 140.0f, drive = 0.5f;
-    bool bassEnabled = true, rhythmEnabled = true;
-    dropforge::LayerMask mask = dropforge::LayerMask::both;
-    std::string maskName = "both";
+    bool bassEnabled = true, rhythmEnabled = true, bladeEnabled = false;
+    dropforge::LayerMask mask = dropforge::LayerMask::all;
+    std::string maskName = "all";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
     std::string componentName = "all";
     std::string furnace = "a", anvil = "a";
@@ -59,6 +59,7 @@ Options parse(int argc, char** argv)
         if (flag == "--sample-rate") options.rate = integer(argv[i + 1], 44100, 192000);
         else if (flag == "--bass-enabled") options.bassEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--rhythm-enabled") options.rhythmEnabled = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--blade-enabled") options.bladeEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--block-size") options.block = integer(argv[i + 1], 1, 65536);
         else if (flag == "--tail-seconds")
         {
@@ -81,6 +82,12 @@ Options parse(int argc, char** argv)
             const auto db = number(argv[i + 1]);
             if (db < -60.0 || db > 6.0) throw std::runtime_error("Anvil Level must be -60 to +6 dB");
             options.anvilLevelDb = static_cast<float>(db);
+        }
+        else if (flag == "--blade-level-db")
+        {
+            const auto db = number(argv[i + 1]);
+            if (db < -60.0 || db > 6.0) throw std::runtime_error("Blade Level must be -60 to +6 dB");
+            options.bladeLevelDb = static_cast<float>(db);
         }
         else if (flag == "--split-hz" || flag == "--drive")
         {
@@ -121,11 +128,13 @@ Options parse(int argc, char** argv)
         else if (flag == "--layer-mask")
         {
             options.maskName = argv[i + 1];
-            if (options.maskName == "both") options.mask = dropforge::LayerMask::both;
+            if (options.maskName == "all") options.mask = dropforge::LayerMask::all;
+            else if (options.maskName == "both") options.mask = dropforge::LayerMask::both;
+            else if (options.maskName == "lead") options.mask = dropforge::LayerMask::lead;
             else if (options.maskName == "bass") options.mask = dropforge::LayerMask::bass;
             else if (options.maskName == "rhythm") options.mask = dropforge::LayerMask::rhythm;
             else if (options.maskName == "none") options.mask = dropforge::LayerMask::none;
-            else throw std::runtime_error("Layer mask must be both, bass, rhythm or none");
+            else throw std::runtime_error("Layer mask must be all, both, bass, rhythm, lead or none");
         }
         else throw std::runtime_error("Unknown option: " + flag);
     }
@@ -202,6 +211,7 @@ void render(const Options& options)
     core.setFurnaceOptions(options.furnaceMono, options.furnaceDrop);
     core.setDestruction(options.anvilDestroy, options.furnaceDestroy);
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
+    core.setLead(options.bladeEnabled, options.bladeLevelDb);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -262,6 +272,8 @@ void render(const Options& options)
     metrics->setProperty("drive", options.drive);
     metrics->setProperty("bass_enabled", options.bassEnabled);
     metrics->setProperty("rhythm_enabled", options.rhythmEnabled);
+    metrics->setProperty("blade_enabled", options.bladeEnabled);
+    metrics->setProperty("blade_level_db", options.bladeLevelDb);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -291,7 +303,7 @@ int main(int argc, char** argv)
     {
         std::cout << "render_tool input.mid output.wav metrics.json [--sample-rate 48000] [--block-size 512]\n"
                      "  [--output-db 0] [--tail-seconds 0.1] [--split-hz 140] [--drive 0.5]\n"
-                     "  [--layer-mask both|bass|rhythm|none] (diagnostic output mask, not a playing mode)\n"
+                     "  [--layer-mask all|both|bass|rhythm|lead|none] (diagnostic output mask; both = Anvil + Furnace)\n"
                      "  [--bass-component all|clean|grit|dry-grit|unison-grit] (diagnostic isolation, same final filter/envelope)\n"
                      "  [--bass-enabled 0|1] [--rhythm-enabled 0|1] (default 1/1; selects Both/Bass/Rhythm/Off routing)\n"
                      "  [--furnace a|b|c|d] (Furnace mode; default a)\n"
@@ -299,6 +311,7 @@ int main(int argc, char** argv)
                      "  [--furnace-mono 0|1] [--furnace-drop 0|1] (Furnace options; default 0)\n"
                      "  [--anvil-destroy 0|1] [--furnace-destroy 0|1] (Destruction; default 0)\n"
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
+                     "  [--blade-enabled 0|1] [--blade-level-db 0] (Blade power, default off, and Level)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

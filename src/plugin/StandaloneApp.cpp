@@ -4,7 +4,7 @@
 //   Dropforge.exe --self-test
 //
 // creates the processor and editor offscreen (never a window, never an audio
-// device), plays short phrases through every mode pair, checks the sound and
+// device), plays short phrases through every mode pair with Blade on, checks the sound and
 // the saved state, prints one line per check and exits 0 on success, 1 on
 // any failure.
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -30,6 +30,7 @@ public:
         editorRenders(*processor);
         processor->setRateAndBufferSizeDetails(rate, blockSize);
         processor->prepareToPlay(rate, blockSize);
+        set(*processor, "lead_on", 1.0f); // every phrase with all three instruments
         for (const bool destroy : {false, true})
             for (int anvil = 0; anvil < 4; ++anvil)
                 for (int furnace = 0; furnace < 4; ++furnace)

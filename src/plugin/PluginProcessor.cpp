@@ -40,8 +40,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::bassEnabled, 1}, "Anvil enabled", true));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{dropforge::parameters::rhythmEnabled, 1}, "Furnace enabled", true));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::leadEnabled, 1}, "Blade enabled", false));
     for (const auto& layer : {std::pair{dropforge::parameters::bassLevel, "Anvil Level"},
-                              std::pair{dropforge::parameters::rhythmLevel, "Furnace Level"}})
+                              std::pair{dropforge::parameters::rhythmLevel, "Furnace Level"},
+                              std::pair{dropforge::parameters::leadLevel, "Blade Level"}})
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{layer.first, 1}, layer.second,
             juce::NormalisableRange<float>{-60.0f, 6.0f}, 0.0f,
@@ -77,6 +80,8 @@ DropforgeProcessor::DropforgeProcessor()
     rhythmDrop = state.getRawParameterValue(dropforge::parameters::rhythmDrop);
     bassDestroy = state.getRawParameterValue(dropforge::parameters::bassDestroy);
     rhythmDestroy = state.getRawParameterValue(dropforge::parameters::rhythmDestroy);
+    leadEnabled = state.getRawParameterValue(dropforge::parameters::leadEnabled);
+    leadLevel = state.getRawParameterValue(dropforge::parameters::leadLevel);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -86,6 +91,7 @@ void DropforgeProcessor::prepareToPlay(double sampleRate, int)
     preparedRate = std::isfinite(sampleRate) && sampleRate >= 44100.0 && sampleRate <= 192000.0 ? sampleRate : 44100.0;
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
+    core.setLead(readToggle(leadEnabled, false), leadLevel->load());
     applyModes();
     core.prepare(preparedRate, readOutputDb());
     reset();
@@ -104,6 +110,7 @@ void DropforgeProcessor::reset()
 {
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
+    core.setLead(readToggle(leadEnabled, false), leadLevel->load());
     applyModes();
     core.reset(readOutputDb());
     panicRequested.store(false, std::memory_order_relaxed);
@@ -128,6 +135,7 @@ void DropforgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         core.panic();
     core.setOutputDb(readOutputDb());
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
+    core.setLead(readToggle(leadEnabled, false), leadLevel->load());
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     applyModes();
     dropforge::processMidiBlock(core, buffer, midi);

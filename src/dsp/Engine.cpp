@@ -61,6 +61,12 @@ void Engine::reset() noexcept
     rhythmPower.reset(rhythmEnabled ? 1.0 : 0.0);
     bassSuspended = !bassEnabled;
     rhythmSuspended = !rhythmEnabled;
+    blade.prepare(rate, attackSamples, releaseSamples, transitionSamples);
+    leadChannel = 1;
+    leadBendOffset.reset(0.0);
+    leadMixLevel.reset(leadMixTarget);
+    leadPower.reset(leadEnabled ? 1.0 : 0.0);
+    leadSuspended = !leadEnabled;
 }
 
 void Engine::clearRhythm() noexcept
@@ -198,8 +204,9 @@ void Engine::noteOn(int channel, int note, int velocity) noexcept
         noteOff(channel, note);
         return;
     }
-    // Blade's change waits for its voice (M2); the router already tracks it.
-    updateBass(router.noteOn(channel, note, velocity).bass);
+    const auto changes = router.noteOn(channel, note, velocity);
+    updateBass(changes.bass);
+    updateLead(changes.lead);
     if (rhythmEnabled) startRhythm(channel, note, velocity);
 }
 
@@ -215,13 +222,17 @@ void Engine::startRhythm(int channel, int note, int velocity) noexcept
 
 void Engine::noteOff(int channel, int note) noexcept
 {
-    updateBass(router.noteOff(channel, note).bass);
+    const auto changes = router.noteOff(channel, note);
+    updateBass(changes.bass);
+    updateLead(changes.lead);
     for (auto& furnace : furnaces) furnace.release(channel, note);
 }
 
 void Engine::allNotesOff(int channel) noexcept
 {
-    updateBass(router.allNotesOff(channel).bass);
+    const auto changes = router.allNotesOff(channel);
+    updateBass(changes.bass);
+    updateLead(changes.lead);
     for (auto& furnace : furnaces) furnace.release(channel, -1);
 }
 
@@ -257,6 +268,49 @@ void Engine::updateBass(NoteRouter::Change change) noexcept
     }
 }
 
+// Blade follows its key like Anvil: a hard attack (2 ms crossfade) on a new
+// note, a bend-owner glide on a retarget, the release when no key is left.
+void Engine::updateLead(NoteRouter::Change change) noexcept
+{
+    if (!leadEnabled) return;
+    const auto key = router.leadKey();
+    if (change == NoteRouter::Change::attack)
+    {
+        leadChannel = key.channel;
+        leadBendOffset.reset(0.0);
+        blade.start(NoteRouter::frequency(key.note), key.velocity);
+    }
+    else if (change == NoteRouter::Change::retarget)
+    {
+        const auto oldRatio = bend[static_cast<std::size_t>(leadChannel - 1)].value() + leadBendOffset.value();
+        leadChannel = key.channel;
+        leadBendOffset.reset(oldRatio - bend[static_cast<std::size_t>(leadChannel - 1)].value());
+        leadBendOffset.setTarget(0.0, transitionSamples);
+        blade.retargetVelocity(key.velocity);
+    }
+    else if (change == NoteRouter::Change::release)
+        blade.stop();
+}
+
+void Engine::setLeadEnabled(bool on) noexcept
+{
+    if (on == leadEnabled) return;
+    leadEnabled = on;
+    leadPower.setTarget(on ? 1.0 : 0.0, fadeSamples);
+    if (on)
+    {
+        leadSuspended = false;
+        updateLead(router.leadKey().held() ? NoteRouter::Change::attack : NoteRouter::Change::release);
+    }
+}
+
+void Engine::setLeadLevel(float db) noexcept
+{
+    db = std::isfinite(db) ? std::clamp(db, -60.0f, 6.0f) : 0.0f;
+    const auto gain = db <= -60.0f ? 0.0 : std::pow(10.0, db / 20.0);
+    if (gain != leadMixTarget) { leadMixTarget = gain; leadMixLevel.setTarget(gain, fadeSamples); }
+}
+
 void Engine::pitchBend(int channel, int wheel) noexcept
 {
     if (channel >= 1 && channel <= 16)
@@ -286,7 +340,7 @@ void Engine::process(float* left, float* right, int numSamples, LayerMask output
     for (int at = 0; at < numSamples; at += controlBlock)
         processBlock(left + at, right + at, std::min(controlBlock, numSamples - at), outputMask,
                      {offset(taps.bassLeft, at), offset(taps.bassRight, at),
-                      offset(taps.rhythmLeft, at), offset(taps.rhythmRight, at)},
+                      offset(taps.rhythmLeft, at), offset(taps.rhythmRight, at), offset(taps.lead, at)},
                      component);
 }
 
@@ -303,6 +357,7 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     {
         rhythmGain[i] = rhythmPower.next() * rhythmMixLevel.next();
         bassGain[i] = bassPower.next() * bassMixLevel.next() * anvilBalance;
+        leadGain[i] = leadPower.next() * leadMixLevel.next() * bladeBalance;
     }
     // A layer switched off stops synthesis at the sample its fade reaches
     // zero, discarding its histories. MIDI tracking continues, so re-entry
@@ -367,6 +422,17 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         bassBendOffset.reset(0.0); bassSuspended = true;
     }
 
+    const auto leadCount = audibleUntil(leadSuspended, leadEnabled, leadGain);
+    const auto& leadBend = bendRatio[static_cast<std::size_t>(leadChannel - 1)];
+    std::array<float, controlBlock> lead{};
+    for (std::size_t i = 0; i < leadCount; ++i)
+        lead[i] = static_cast<float>(leadGain[i] * blade.next(leadBend[i] + leadBendOffset.next()));
+    if (!leadSuspended && !leadEnabled && leadCount > 0 && leadGain[leadCount - 1] == 0.0)
+    {
+        blade.reset();
+        leadBendOffset.reset(0.0); leadSuspended = true;
+    }
+
     const auto mask = static_cast<unsigned>(outputMask);
     for (std::size_t i = 0; i < samples; ++i)
     {
@@ -376,8 +442,12 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         if (taps.bassRight) taps.bassRight[i] = bass[i];
         if (taps.rhythmLeft) taps.rhythmLeft[i] = furnaceLeft;
         if (taps.rhythmRight) taps.rhythmRight[i] = furnaceRight;
+        if (taps.lead) taps.lead[i] = lead[i];
+        // Blade is added last and only when present, so an Anvil + Furnace
+        // mix stays bit-identical to the M1 engine.
         left[i] = ((mask & 1u) != 0 ? bass[i] : 0.0f) + ((mask & 2u) != 0 ? furnaceLeft : 0.0f);
         right[i] = ((mask & 1u) != 0 ? bass[i] : 0.0f) + ((mask & 2u) != 0 ? furnaceRight : 0.0f);
+        if ((mask & 4u) != 0 && i < leadCount) { left[i] += lead[i]; right[i] += lead[i]; }
     }
 }
 

@@ -62,6 +62,8 @@ public:
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }
+    // Blade (SPEC section 3): power and Level.
+    void setLead(bool on, float levelDb) noexcept { engine.setLeadEnabled(on); engine.setLeadLevel(levelDb); }
     // Diagnostic voicing for renders and tests. The plugin keeps the fixed
     // 140 Hz split and 0.5 drive the owner chose; it never calls this.
     void setBassParameters(float splitHz, float drive) noexcept
@@ -76,7 +78,7 @@ public:
     }
     void midi(const std::uint8_t* bytes, int size) noexcept { dispatchMidi(engine, bytes, size); }
     void process(float* left, float* right, int samples,
-                 LayerMask outputMask = LayerMask::both, LayerTaps taps = {},
+                 LayerMask outputMask = LayerMask::all, LayerTaps taps = {},
                  BassComponent component = BassComponent::all) noexcept
     {
         engine.process(left, right, samples, outputMask, taps, component);

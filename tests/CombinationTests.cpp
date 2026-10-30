@@ -8,7 +8,7 @@
 
 // The gates for every mode combination (SPEC section 12): each of the 16
 // Anvil x Furnace pairs, clean and with both Destruction switches on, must
-// keep separation, Anvil's exact mono, the -1 dBFS ceiling, finite output,
+// keep separation, Anvil's exact mono, the -1 dBFS ceiling with Blade on, finite output,
 // identical renders at blocks 1, 73 and 512, and repeat exactly after reset.
 // (Aliasing is gated per mode in bass_audio and rhythm_mix, CPU by the
 // benchmark: neither depends on which mode the other instrument plays.)
@@ -47,7 +47,7 @@ Render render(InstrumentCore& core, int length, int block)
         }
         const auto count = std::min({block, length - at, at < changeAt ? changeAt - at : length});
         const auto i = static_cast<std::size_t>(at);
-        core.process(out.left.data() + i, out.right.data() + i, count, LayerMask::both,
+        core.process(out.left.data() + i, out.right.data() + i, count, LayerMask::all,
                      {out.bassLeft.data() + i, out.bassRight.data() + i, out.rhythmLeft.data() + i, out.rhythmRight.data() + i});
         at += count;
     }
@@ -58,6 +58,7 @@ void configure(InstrumentCore& core, int anvil, int furnace, bool destroy)
 {
     core.setModes(anvil, furnace);
     core.setDestruction(destroy, destroy);
+    core.setLead(true, 0.0f); // all three layers: Blade joins the ceiling and determinism checks
     core.prepare(rate);
 }
 
