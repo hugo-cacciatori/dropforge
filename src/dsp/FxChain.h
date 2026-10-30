@@ -26,7 +26,7 @@ public:
     enum class Feel { straight, dotted, triplet };
     struct Settings
     {
-        float sendAnvil = 0.0f, sendFurnace = 1.0f, sendBlade = 0.6f, duck = 0.5f;
+        float sendAnvil = 0.6f, sendFurnace = 1.0f, sendBlade = 0.6f, duck = 0.5f;
         bool delayOn = false, delaySync = true, delayPingPong = true;
         int delayDivision = 3; // 1/8
         Feel delayFeel = Feel::dotted;
@@ -50,6 +50,15 @@ public:
         const auto beats = divisionBeats[static_cast<std::size_t>(std::clamp(settings.delayDivision, 0, 7))]
                          * feelScale[static_cast<std::size_t>(settings.delayFeel)];
         return std::min(beats * 60.0 / tempo(bpm), FxDelay::maximumSeconds);
+    }
+    // The owner's routing rules (SPEC section 8, 2026-10-30): Anvil feeds the
+    // Delay and Reverb only while it plays alone, so the low end stays dry
+    // in a mix; the Delay may ping-pong only on a mono source (Furnace Mono,
+    // or Blade or Anvil alone), never on the stereo wall.
+    static bool anvilSendOpen(bool anvil, bool furnace, bool blade) noexcept { return anvil && !furnace && !blade; }
+    static bool pingPongAllowed(bool anvil, bool furnace, bool blade, bool furnaceMono) noexcept
+    {
+        return furnaceMono || (blade && !anvil && !furnace) || anvilSendOpen(anvil, furnace, blade);
     }
     // The host's tempo, 20-300 BPM; anything else (no host tempo) is 120.
     static double tempo(double bpm) noexcept { return std::isfinite(bpm) && bpm >= 20.0 && bpm <= 300.0 ? bpm : 120.0; }

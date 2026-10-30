@@ -1,5 +1,6 @@
 #include "PluginEditor.h"
 #include "plugin/PluginProcessor.h"
+#include "dsp/FxChain.h"
 
 namespace
 {
@@ -278,6 +279,13 @@ void DropforgeEditor::timerCallback()
     const auto current = fxShown ? -1 : juce::jlimit(0, pageCount - 1, owner.currentPage());
     fxTab.setToggleState(fxShown, juce::dontSendNotification);
     fxTab.setEffectsOn(FxPage::effectsOn(owner.parameterState()));
+    {
+        auto& values = owner.parameterState();
+        const auto on = [&values](const char* id) { return values.getRawParameterValue(id)->load() >= 0.5f; };
+        const auto anvil = on(ids::bassEnabled), furnace = on(ids::rhythmEnabled), blade = on(ids::leadEnabled);
+        fxPage->showRouting(dropforge::FxChain::anvilSendOpen(anvil, furnace, blade),
+                            dropforge::FxChain::pingPongAllowed(anvil, furnace, blade, on(ids::rhythmMono)));
+    }
     fxTab.setDescription(juce::String("FX page") + (fxShown ? " open. " : ". ") + juce::String(fxTab.effectsOn()) + " effects on.");
     if (!fxShown && fxPage->isVisible()) for (auto* knob : fxPage->knobs()) knob->finishEntry(true);
     if (fxPage->isVisible() != fxShown) fxPage->setVisible(fxShown);

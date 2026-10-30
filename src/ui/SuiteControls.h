@@ -282,6 +282,22 @@ public:
     std::size_t size() const noexcept { return buttons.size(); }
     juce::Button& button(std::size_t index) noexcept { return *buttons[index]; }
     int selectedIndex() const noexcept { return selected; }
+    // Locks the selector on one value (index >= 0) while the sound forces it,
+    // greying the other choices so they cannot be picked; -1 unlocks it and
+    // shows the stored value again.
+    void setForced(int index)
+    {
+        if (index == forced) return;
+        forced = index;
+        for (std::size_t i = 0; i < buttons.size(); ++i)
+        {
+            const auto locked = forced >= 0 && static_cast<int>(i) != forced;
+            buttons[i]->setEnabled(!locked);
+            buttons[i]->setAlpha(locked ? 0.35f : 1.0f);
+        }
+        show(stored);
+    }
+    int forcedIndex() const noexcept { return forced; }
     void resized() override
     {
         const auto width = getWidth() / static_cast<int>(buttons.size());
@@ -309,14 +325,16 @@ private:
     };
     void show(float value)
     {
-        selected = juce::jlimit(0, static_cast<int>(buttons.size()) - 1, juce::roundToInt(value - first));
+        stored = value;
+        selected = forced >= 0 ? forced : juce::jlimit(0, static_cast<int>(buttons.size()) - 1, juce::roundToInt(value - first));
         for (std::size_t i = 0; i < buttons.size(); ++i)
             buttons[i]->setToggleState(static_cast<int>(i) == selected, juce::dontSendNotification);
     }
     float first;
     std::vector<std::unique_ptr<Segment>> buttons;
     juce::ParameterAttachment attachment;
-    int selected = 0;
+    int selected = 0, forced = -1;
+    float stored = 0.0f;
 };
 
 // Stereo peak meter with clip and gain-reduction lights, fed at 30 Hz from

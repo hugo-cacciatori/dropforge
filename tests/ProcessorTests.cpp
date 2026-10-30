@@ -504,7 +504,12 @@ void editorTests(const juce::String& snapshot)
         {
             // Offscreen there is no window, so build the handler directly (public on Component).
             const auto handler = static_cast<juce::Component*>(button)->createAccessibilityHandler();
-            require(button->getTooltip().isNotEmpty() && button->getWantsKeyboardFocus() && button->getTitle().isNotEmpty()
+            // A greyed choice (Ping-pong while it is not allowed) keeps its name
+            // and help but cannot take focus until it is enabled again.
+            const auto focusable = button->getWantsKeyboardFocus() || !button->isEnabled();
+            if (!(button->getTooltip().isNotEmpty() && focusable && button->getTitle().isNotEmpty() && handler && handler->getHelp().isNotEmpty()))
+                std::cerr << "unnamed or undescribed button: '" << button->getTitle() << "'\n";
+            require(button->getTooltip().isNotEmpty() && focusable && button->getTitle().isNotEmpty()
                 && handler && handler->getHelp().isNotEmpty(), "all buttons have a name, help and keyboard focus");
         }
     }
@@ -758,6 +763,27 @@ void editorTests(const juce::String& snapshot)
             && highCut->getValueFromText("8k") == 8000.0, "frequencies read and type as 280 or 6.5k");
     highCut->setValue(9000.0, juce::sendNotificationSync);
     require(std::abs(processor.parameterState().getRawParameterValue(ids::fxDelayHighCut)->load() - 9000.0f) < 1.0f, "a compact knob drives its parameter");
+    // The owner's routing rules on the page: in the default mix (Anvil and the
+    // stereo wall) Anvil's send is greyed and Mode is locked on Stereo.
+    const auto bladeWasOn = toggle(processor, ids::leadEnabled);
+    setToggle(processor, ids::leadEnabled, false);
+    auto* anvilSend = fxPage.knobFor(ids::fxSendAnvil);
+    auto* delayMode = fxPage.choiceFor(ids::fxDelayMode);
+    refreshUi();
+    require(anvilSend != nullptr && !anvilSend->isEnabled() && delayMode->forcedIndex() == 0 && delayMode->selectedIndex() == 0
+            && !delayMode->button(1).isEnabled() && choice(processor, ids::fxDelayMode) == 1,
+            "in a stereo mix Anvil's send is greyed and Ping-pong cannot be chosen (the stored choice stays)");
+    setToggle(processor, ids::rhythmMono, true);
+    refreshUi();
+    require(delayMode->forcedIndex() == -1 && delayMode->selectedIndex() == 1 && delayMode->button(1).isEnabled(),
+            "Furnace Mono unlocks Ping-pong and shows the stored choice");
+    setToggle(processor, ids::rhythmMono, false);
+    setToggle(processor, ids::rhythmEnabled, false);
+    refreshUi();
+    require(anvilSend->isEnabled() && delayMode->forcedIndex() == -1, "Anvil alone opens its send and allows ping-pong");
+    setToggle(processor, ids::rhythmEnabled, true);
+    setToggle(processor, ids::leadEnabled, bladeWasOn);
+    refreshUi();
     editor->spaceKnob().setValue(75.0, juce::sendNotificationSync);
     require(std::abs(processor.parameterState().getRawParameterValue(ids::spaceAmount)->load() - 75.0f) < 0.01f, "Space in the header drives both wets");
     editor->tab(0).onClick();

@@ -538,6 +538,60 @@ void saturate()
     require(change <= 1.25f * std::max(steady, largestStep(toggled.left, 40000, 72000)), "Saturate fades in without a click");
 }
 
+// The owner's routing rules (SPEC section 8, 2026-10-30): Anvil's send is
+// closed in a mix and open when it plays alone; ping-pong only on a mono
+// source (Furnace Mono, or Blade or Anvil alone), otherwise the Delay is stereo.
+void routingRules()
+{
+    const auto play = [](dropforge::FxChain::Settings fx, bool anvil, bool furnace, bool blade, bool mono)
+    {
+        dropforge::InstrumentCore core;
+        core.setLayersEnabled(anvil, furnace);
+        core.setLead(blade, 0.0f);
+        core.setFurnaceOptions(mono, false);
+        core.setFx(fx, 120.0);
+        core.prepare(rate);
+        const std::uint8_t on[][3]{{0x90, 40, 120}, {0x90, 47, 120}, {0x90, 52, 120}};
+        for (const auto& message : on) core.midi(message, 3);
+        std::vector<float> left(48000), right(48000);
+        core.process(left.data(), right.data(), 12000);
+        const std::uint8_t off[][3]{{0x80, 40, 0}, {0x80, 47, 0}, {0x80, 52, 0}};
+        for (const auto& message : off) core.midi(message, 3);
+        core.process(left.data() + 12000, right.data() + 12000, 36000);
+        return Stereo{left, right};
+    };
+    dropforge::FxChain::Settings anvilOnly;
+    anvilOnly.delayOn = true; anvilOnly.sendAnvil = 1.0f; anvilOnly.sendFurnace = anvilOnly.sendBlade = 0.0f;
+    dropforge::FxChain::Settings none;
+    const auto mixDry = play(none, true, true, true, false), mixAnvil = play(anvilOnly, true, true, true, false);
+    require(mixDry.left == mixAnvil.left && mixDry.right == mixAnvil.right, "in a mix Anvil's send is closed");
+    const auto soloDry = play(none, true, false, false, false), soloAnvil = play(anvilOnly, true, false, false, false);
+    require(rmsDb(soloAnvil.left, 14400, 48000) > rmsDb(soloDry.left, 14400, 48000) + 20.0, "soloed, Anvil sends to the Delay");
+    require(dropforge::FxChain::Settings{}.sendAnvil == 0.6f, "Anvil's send defaults to 60 % (used only when soloed)");
+
+    dropforge::FxChain::Settings ping, stereo;
+    ping.delayOn = stereo.delayOn = true;
+    ping.delayPingPong = true; stereo.delayPingPong = false;
+    struct Case { bool anvil, furnace, blade, mono, allowed; const char* what; };
+    const Case cases[] = {
+        {true, true, false, false, false, "the stereo wall with Anvil: no ping-pong"},
+        {false, true, true, false, false, "the stereo wall with Blade: no ping-pong"},
+        {false, true, false, false, false, "the stereo wall alone: no ping-pong"},
+        {true, true, true, true, true, "Furnace Mono allows ping-pong"},
+        {false, false, true, false, true, "Blade alone allows ping-pong"},
+        {true, false, false, false, true, "Anvil alone allows ping-pong"},
+        {true, false, true, false, false, "Anvil with Blade: no ping-pong"},
+    };
+    for (const auto& c : cases)
+    {
+        require(dropforge::FxChain::pingPongAllowed(c.anvil, c.furnace, c.blade, c.mono) == c.allowed, c.what);
+        const auto a = play(ping, c.anvil, c.furnace, c.blade, c.mono), b = play(stereo, c.anvil, c.furnace, c.blade, c.mono);
+        const auto same = a.left == b.left && a.right == b.right;
+        require(same != c.allowed, c.what);
+    }
+    std::cout << "routing rules passed\n";
+}
+
 void blockInvariance()
 {
     const auto render = [](int block)
@@ -607,6 +661,7 @@ int main()
     saturate();
     blockInvariance();
     instrument();
+    routingRules();
     std::cout << "fx passed\n";
     return 0;
 }

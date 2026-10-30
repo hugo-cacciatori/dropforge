@@ -95,7 +95,7 @@ public:
         delay.newRow();
         delay.add(choice(state, p::fxDelayFeel, "Feel", "straight, dotted (one and a half) or triplet (two thirds) note lengths.",
                          {"Straight", "Dotted", "Triplet"}), "FEEL", 180);
-        delay.add(choice(state, p::fxDelayMode, "Mode", "Stereo repeats each side on itself; Ping-pong bounces left and right.",
+        delay.add(choice(state, p::fxDelayMode, "Mode", "Stereo repeats each side on itself; Ping-pong bounces left and right, only while Furnace Mono is on or Blade or Anvil plays alone.",
                          {"Stereo", "Ping-pong"}), "MODE", 160);
         delay.add(knob(state, p::fxDelayMs, "Delay time", "Time: the echo length when Sync is off.", 0), "TIME ms", 96);
         delay.newRow();
@@ -120,7 +120,7 @@ public:
         reverb.add(frequencyKnob(state, p::fxReverbHighCut, "Reverb high cut", "High Cut: darkens the room."), "HIGH CUT Hz", 88);
 
         auto& sends = strip("SENDS", "", nullptr, state);
-        sends.add(knob(state, p::fxSendAnvil, "Anvil send", "Anvil send: how much bass reaches the Delay and Reverb (keep it low for a tight low end).", 0), "ANVIL %", 78);
+        sends.add(knob(state, p::fxSendAnvil, "Anvil send", "Anvil send: how much bass reaches the Delay and Reverb; open only while Anvil plays alone, so a mix keeps a dry low end.", 0), "ANVIL %", 78);
         sends.add(knob(state, p::fxSendFurnace, "Furnace send", "Furnace send: how much of the chord wall reaches the Delay and Reverb.", 0), "FURNACE %", 78);
         sends.newRow();
         sends.add(knob(state, p::fxSendBlade, "Blade send", "Blade send: how much of the lead reaches the Delay and Reverb.", 0), "BLADE %", 78);
@@ -173,6 +173,17 @@ public:
     {
         for (std::size_t i = 0; i < choiceControls.size(); ++i) if (id == choiceIds[i]) return choiceControls[i].get();
         return nullptr;
+    }
+    // The owner's routing rules on screen (SPEC section 8): Anvil's send greys
+    // out while closed, and Mode locks on Stereo while ping-pong is not allowed.
+    void showRouting(bool anvilSendOpen, bool pingPongAllowed)
+    {
+        if (auto* send = knobFor(dropforge::parameters::fxSendAnvil))
+        {
+            send->setEnabled(anvilSendOpen);
+            send->setAlpha(anvilSendOpen ? 1.0f : 0.4f);
+        }
+        if (auto* mode = choiceFor(dropforge::parameters::fxDelayMode)) mode->setForced(pingPongAllowed ? -1 : 0);
     }
     // How many effects are on (the tab shows it).
     static int effectsOn(juce::AudioProcessorValueTreeState& state)

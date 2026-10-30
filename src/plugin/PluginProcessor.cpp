@@ -105,7 +105,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, range, fallback,
                                                                juce::AudioParameterFloatAttributes{}.withLabel(unit)));
     };
-    percent(fx::fxSendAnvil, "Anvil Send", 100.0f, 0.0f);
+    percent(fx::fxSendAnvil, "Anvil Send", 100.0f, 60.0f);
     percent(fx::fxSendFurnace, "Furnace Send", 100.0f, 100.0f);
     percent(fx::fxSendBlade, "Blade Send", 100.0f, 60.0f);
     percent(fx::fxDuck, "Ducking", 100.0f, 50.0f);
@@ -292,7 +292,7 @@ void DropforgeProcessor::applyFx() noexcept
         return std::isfinite(v) ? v : fallback;
     };
     dropforge::FxChain::Settings settings;
-    settings.sendAnvil = value(0, 0.0f) / 100.0f;
+    settings.sendAnvil = value(0, 60.0f) / 100.0f;
     settings.sendFurnace = value(1, 100.0f) / 100.0f;
     settings.sendBlade = value(2, 60.0f) / 100.0f;
     settings.duck = value(3, 50.0f) / 100.0f;

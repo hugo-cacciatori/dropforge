@@ -61,6 +61,7 @@ public:
     {
         engine.setFurnaceMono(mono);
         engine.setFurnaceDrop(drop);
+        if (mono != furnaceMono) { furnaceMono = mono; applyFx(); }
     }
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
@@ -69,6 +70,7 @@ public:
         engine.setLayersEnabled(bass, rhythm);
         powered[0] = bass; powered[1] = rhythm;
         clearTailsWhenAllOff();
+        applyFx();
     }
     // Blade (SPEC section 3): power and Level.
     void setLead(bool on, float levelDb) noexcept
@@ -77,13 +79,15 @@ public:
         engine.setLeadLevel(levelDb);
         powered[2] = on;
         clearTailsWhenAllOff();
+        applyFx();
     }
     // The FX page (SPEC section 8) at the host's tempo (BPM; anything
     // outside 20-300, such as no host tempo, plays at 120).
     void setFx(const FxChain::Settings& settings, double bpm) noexcept
     {
-        fx.set(settings, bpm);
-        master.setSaturate(settings.saturateOn, settings.saturateDriveDb, settings.saturateMix);
+        fxChosen = settings;
+        fxBpm = bpm;
+        applyFx();
     }
     // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
     void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
@@ -178,6 +182,17 @@ public:
     }
 
 private:
+    // The FX as chosen, with the owner's routing rules applied for the
+    // instruments on now: Anvil's send closed in a mix, ping-pong only on a
+    // mono source (the stored choice returns when allowed again).
+    void applyFx() noexcept
+    {
+        auto settings = fxChosen;
+        if (!FxChain::anvilSendOpen(powered[0], powered[1], powered[2])) settings.sendAnvil = 0.0f;
+        if (!FxChain::pingPongAllowed(powered[0], powered[1], powered[2], furnaceMono)) settings.delayPingPong = false;
+        fx.set(settings, fxBpm);
+        master.setSaturate(settings.saturateOn, settings.saturateDriveDb, settings.saturateMix);
+    }
     // Every instrument switched off clears the echoes (SPEC section 8).
     void clearTailsWhenAllOff() noexcept
     {
@@ -190,7 +205,9 @@ private:
     static constexpr int fxRun = 256;
     std::array<float, fxRun> tapBassLeft{}, tapBassRight{}, tapRhythmLeft{}, tapRhythmRight{}, tapLead{};
     std::array<bool, 3> powered{true, true, false};
-    bool wasAllOff = false;
+    bool wasAllOff = false, furnaceMono = false;
+    FxChain::Settings fxChosen{};
+    double fxBpm = 120.0;
     Master master;
     OutputGain output;
     Meters meters;
