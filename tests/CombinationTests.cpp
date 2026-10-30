@@ -6,12 +6,12 @@
 #include <iostream>
 #include <vector>
 
-// The gates for every mode combination (SPEC section 12): each of the 16
-// Anvil x Furnace pairs, clean and with both Destruction switches on, must
-// keep separation, Anvil's exact mono, the -1 dBFS ceiling with Blade on, finite output,
-// identical renders at blocks 1, 73 and 512, and repeat exactly after reset.
-// (Aliasing is gated per mode in bass_audio and rhythm_mix, CPU by the
-// benchmark: neither depends on which mode the other instrument plays.)
+// The gates for every mode combination (SPEC section 12): each of the 64
+// Anvil x Furnace x Blade sets, clean and with every Destruction switch on,
+// must keep separation, Anvil's exact mono, the -1 dBFS ceiling, finite
+// output, identical renders at blocks 1, 73 and 512, and repeat exactly after
+// reset. (Aliasing is gated per mode in bass_audio, rhythm_mix and
+// blade_voice, CPU by the benchmark: neither depends on the other modes.)
 namespace
 {
 using dropforge::InstrumentCore;
@@ -54,11 +54,12 @@ Render render(InstrumentCore& core, int length, int block)
     return out;
 }
 
-void configure(InstrumentCore& core, int anvil, int furnace, bool destroy)
+void configure(InstrumentCore& core, int anvil, int furnace, int blade, bool destroy)
 {
     core.setModes(anvil, furnace);
     core.setDestruction(destroy, destroy);
     core.setLead(true, 0.0f); // all three layers: Blade joins the ceiling and determinism checks
+    core.setLeadMode(blade, destroy);
     core.prepare(rate);
 }
 
@@ -76,9 +77,10 @@ int main()
     for (const bool destroy : {false, true})
         for (int anvil = 0; anvil < 4; ++anvil)
             for (int furnace = 0; furnace < 4; ++furnace)
+            for (int blade = 0; blade < 4; ++blade)
             {
                 InstrumentCore core;
-                configure(core, anvil, furnace, destroy);
+                configure(core, anvil, furnace, blade, destroy);
                 const auto reference = render(core, frames, 512);
                 require(reference.bassLeft == reference.bassRight, "Anvil is exactly mono in every combination");
                 for (std::size_t i = 0; i < reference.left.size(); ++i)
@@ -88,7 +90,7 @@ int main()
                 }
                 // SPEC section 4 separation: below 100 Hz Furnace stays 20 dB under Anvil.
                 const auto m = dsp_core::test::measure(reference.rhythmLeft, reference.rhythmRight, reference.bassLeft, rate, 100.0);
-                std::cout << "anvil=" << static_cast<char>('A' + anvil) << " furnace=" << static_cast<char>('A' + furnace)
+                std::cout << "anvil=" << static_cast<char>('A' + anvil) << " furnace=" << static_cast<char>('A' + furnace) << " blade=" << static_cast<char>('A' + blade)
                           << " destroy=" << destroy << " separation_db=" << m.separationDb << " low_bass_dbfs=" << m.lowBassDbfs << '\n';
                 require(m.lowBassDbfs > -60.0, "Anvil carries the lows in every combination");
                 require(m.separationDb <= -20.0, "Furnace stays 20 dB under Anvil below 100 Hz in every combination");
@@ -98,7 +100,7 @@ int main()
                 for (const int block : {1, 73})
                 {
                     InstrumentCore other;
-                    configure(other, anvil, furnace, destroy);
+                    configure(other, anvil, furnace, blade, destroy);
                     require(samePrefix(reference, render(other, changeAt + 6000, block), static_cast<std::size_t>(changeAt + 6000)),
                             "every combination renders identically at blocks 1, 73 and 512");
                 }
@@ -107,7 +109,7 @@ int main()
                 require(samePrefix(reference, render(core, frames, 512), static_cast<std::size_t>(frames)),
                         "every combination repeats exactly after reset");
             }
-    std::cout << "combinations=32 (16 clean, 16 destroyed) worst_separation_db=" << worstSeparation
+    std::cout << "combinations=128 (64 clean, 64 destroyed) worst_separation_db=" << worstSeparation
               << " worst_peak_dbfs=" << 20.0 * std::log10(worstPeak) << '\n';
     require(worstPeak <= dropforge::Master::ceiling, "every combination stays under -1 dBFS");
     return 0;

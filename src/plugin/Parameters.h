@@ -22,4 +22,6 @@ inline constexpr auto rhythmDestroy = "rhythm_destroy";
 // Blade, the lead (SPEC section 3): off by default.
 inline constexpr auto leadEnabled = "lead_on";
 inline constexpr auto leadLevel = "lead_level";
+inline constexpr auto leadMode = "lead_mode";
+inline constexpr auto leadDestroy = "lead_destroy";
 }

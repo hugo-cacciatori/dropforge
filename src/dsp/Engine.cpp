@@ -61,7 +61,13 @@ void Engine::reset() noexcept
     rhythmPower.reset(rhythmEnabled ? 1.0 : 0.0);
     bassSuspended = !bassEnabled;
     rhythmSuspended = !rhythmEnabled;
-    blade.prepare(rate, attackSamples, releaseSamples, transitionSamples);
+    leadSetup[leadSlot] = leadChoice;
+    leadFade = 0;
+    for (std::size_t slot = 0; slot < 2; ++slot)
+    {
+        blades[slot].setMode(leadSetup[slot].mode, leadSetup[slot].destroy);
+        blades[slot].prepare(rate, attackSamples, releaseSamples, transitionSamples);
+    }
     leadChannel = 1;
     leadBendOffset.reset(0.0);
     leadMixLevel.reset(leadMixTarget);
@@ -278,7 +284,8 @@ void Engine::updateLead(NoteRouter::Change change) noexcept
     {
         leadChannel = key.channel;
         leadBendOffset.reset(0.0);
-        blade.start(NoteRouter::frequency(key.note), key.velocity);
+        blades[leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
+        if (leadFade > 0) blades[1 - leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
     }
     else if (change == NoteRouter::Change::retarget)
     {
@@ -286,10 +293,41 @@ void Engine::updateLead(NoteRouter::Change change) noexcept
         leadChannel = key.channel;
         leadBendOffset.reset(oldRatio - bend[static_cast<std::size_t>(leadChannel - 1)].value());
         leadBendOffset.setTarget(0.0, transitionSamples);
-        blade.retargetVelocity(key.velocity);
+        for (auto& voice : blades) voice.retargetVelocity(key.velocity);
     }
     else if (change == NoteRouter::Change::release)
-        blade.stop();
+        for (auto& voice : blades) voice.stop();
+}
+
+void Engine::configureBlade(std::size_t slot) noexcept
+{
+    leadSetup[slot] = leadChoice;
+    blades[slot].setMode(leadChoice.mode, leadChoice.destroy);
+    blades[slot].reset();
+}
+
+// Like updateAnvil(): in place when silent, else a crossfade to a fresh voice
+// that starts the held top key. A change during a fade waits for its end.
+void Engine::updateBlade() noexcept
+{
+    if (leadFade > 0 || leadSetup[leadSlot] == leadChoice) return;
+    if (leadSuspended || !blades[leadSlot].sounding())
+    {
+        configureBlade(leadSlot);
+        return;
+    }
+    leadSlot = 1 - leadSlot;
+    configureBlade(leadSlot);
+    const auto key = router.leadKey();
+    if (leadEnabled && key.held()) blades[leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
+    leadFade = modeFadeSamples;
+}
+
+void Engine::finishLeadFade() noexcept
+{
+    leadFade = 0;
+    blades[1 - leadSlot].reset();
+    updateBlade();
 }
 
 void Engine::setLeadEnabled(bool on) noexcept
@@ -426,10 +464,22 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     const auto& leadBend = bendRatio[static_cast<std::size_t>(leadChannel - 1)];
     std::array<float, controlBlock> lead{};
     for (std::size_t i = 0; i < leadCount; ++i)
-        lead[i] = static_cast<float>(leadGain[i] * blade.next(leadBend[i] + leadBendOffset.next()));
+    {
+        const auto ratio = leadBend[i] + leadBendOffset.next();
+        auto value = blades[leadSlot].next(ratio);
+        if (leadFade > 0)
+        {
+            float in = 1.0f, out = 0.0f;
+            fadeWeights(leadFade--, modeFadeSamples, in, out);
+            value = in * value + out * blades[1 - leadSlot].next(ratio);
+            if (leadFade == 0) finishLeadFade();
+        }
+        lead[i] = static_cast<float>(leadGain[i] * value);
+    }
     if (!leadSuspended && !leadEnabled && leadCount > 0 && leadGain[leadCount - 1] == 0.0)
     {
-        blade.reset();
+        for (auto& voice : blades) voice.reset();
+        if (leadFade > 0) finishLeadFade();
         leadBendOffset.reset(0.0); leadSuspended = true;
     }
 

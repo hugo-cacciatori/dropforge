@@ -130,9 +130,9 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 13, "output; power, level, mode and Destruction for Anvil and Furnace; Furnace Mono and Drop; Blade power and level");
+    require(source.getParameters().size() == 15, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop");
     require(!toggle(source, dropforge::parameters::leadEnabled), "Blade is off by default");
-    for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode})
+    for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode, dropforge::parameters::leadMode})
     {
         const auto* mode = dynamic_cast<juce::AudioParameterChoice*>(source.parameterState().getParameter(id));
         require(mode != nullptr && mode->choices.size() == 4 && mode->getIndex() == 0,
@@ -492,7 +492,9 @@ void editorTests(const juce::String& snapshot)
     auto& furnacePage = editor->instrumentPage(1);
     auto& output = editor->outputKnob();
     auto& footer = editor->helpLine();
-    require(anvil.getButtonText() == "Anvil" && furnace.getButtonText() == "Furnace", "tabs in signal order");
+    auto& bladePage = editor->instrumentPage(2);
+    require(anvil.getButtonText() == "Anvil" && furnace.getButtonText() == "Furnace" && editor->tab(2).getButtonText() == "Blade",
+            "tabs in signal order");
     std::vector<juce::Component*> everything;
     collect(*editor, everything);
     for (auto* component : everything)
@@ -507,8 +509,9 @@ void editorTests(const juce::String& snapshot)
         }
     }
     require(anvil.getToggleState() && anvilPage.isVisible() && !furnacePage.isVisible(), "Anvil page open initially");
-    require(furnacePage.optionSwitch("Mono") && furnacePage.optionSwitch("Drop") && !anvilPage.optionSwitch("Mono"),
-            "Mono and Drop live only on the Furnace page");
+    require(furnacePage.optionSwitch("Mono") && furnacePage.optionSwitch("Drop") && !anvilPage.optionSwitch("Mono")
+            && !bladePage.optionSwitch("Mono"), "Mono and Drop live only on the Furnace page");
+    require(!bladePage.powerSwitch().getToggleState(), "Blade's page shows it off by default");
 
     // Navigation and power.
     const auto outputBounds = output.getBounds();
@@ -530,12 +533,13 @@ void editorTests(const juce::String& snapshot)
     anvil.onClick();
     require(anvilPage.isVisible() && anvilPage.levelKnob().isEnabled(), "a page stays editable while its instrument is off");
 
-    // Modes, Destruction and options.
-    for (int page = 0; page < 2; ++page)
+    // Modes, Destruction and options (Blade switched on so its tab names its mode).
+    setToggle(processor, ids::leadEnabled, true);
+    for (int page = 0; page < 3; ++page)
     {
         auto& instrument = editor->instrumentPage(page);
-        const auto* modeId = page == 0 ? ids::bassMode : ids::rhythmMode;
-        const auto* destroyId = page == 0 ? ids::bassDestroy : ids::rhythmDestroy;
+        const auto* modeId = std::array{ids::bassMode, ids::rhythmMode, ids::leadMode}[(std::size_t) page];
+        const auto* destroyId = std::array{ids::bassDestroy, ids::rhythmDestroy, ids::leadDestroy}[(std::size_t) page];
         auto& modes = instrument.modeSelector();
         require(modes.selectedMode() == 0 && modes.button(0).getToggleState(), "mode A selected by default");
         modes.button(2).onClick();
@@ -633,7 +637,7 @@ void editorTests(const juce::String& snapshot)
         require(editor->getLocalBounds().expanded(1).contains(shown)
                 && (std::abs(shown.getWidth() - size.x) <= 1 || std::abs(shown.getHeight() - size.y) <= 1),
                 "the scaled canvas fills the window without cropping");
-        for (int page = 0; page < 2; ++page)
+        for (int page = 0; page < 3; ++page)
         {
             editor->tab(page).onClick();
             std::vector<juce::Component*> parts;
@@ -678,6 +682,7 @@ void editorTests(const juce::String& snapshot)
     require(keys.bassNote == 40 && keys.high == 0 && keys.low == ((1ull << 40) | (1ull << 52) | (1ull << 55) | (1ull << 59)),
             "the processor publishes held keys and Anvil's lowest key");
     require(keyboard.isHeld(40) && keyboard.isHeld(59) && !keyboard.isHeld(41), "the routing keyboard lights the held chord");
+    require(keys.leadNote == 59, "the processor publishes Blade's top key");
     setToggle(processor, ids::bassEnabled, false);
     midi.clear(); processor.processBlock(audio, midi);
     require(processor.heldKeys().bassNote == -1, "no Anvil key while Anvil is off");
@@ -703,28 +708,29 @@ void editorTests(const juce::String& snapshot)
         for (const int percent : {100, 200})
         {
             editor->setSize(1100 * percent / 100, 700 * percent / 100);
-            for (int page = 0; page < 2; ++page)
+            for (int page = 0; page < 3; ++page)
             {
                 editor->tab(page).onClick();
-                save(juce::String(page == 0 ? "anvil" : "furnace") + "-" + juce::String(percent));
+                save(juce::String(std::array{"anvil", "furnace", "blade"}[(std::size_t) page]) + "-" + juce::String(percent));
             }
         }
         // Every mode finish once, with Destruction and an option lit, for review.
         editor->setSize(1100, 700);
         setToggle(processor, ids::rhythmDestroy, true);
+        setToggle(processor, ids::leadDestroy, true);
         setToggle(processor, ids::rhythmMono, true);
         setToggle(processor, ids::bassEnabled, false);
         for (int mode = 1; mode < 4; ++mode)
         {
-            for (const auto* id : {ids::bassMode, ids::rhythmMode})
+            for (const auto* id : {ids::bassMode, ids::rhythmMode, ids::leadMode})
             {
                 auto* parameter = processor.parameterState().getParameter(id);
                 parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(mode)));
             }
-            for (int page = 0; page < 2; ++page)
+            for (int page = 0; page < 3; ++page)
             {
                 editor->tab(page).onClick();
-                save(juce::String(page == 0 ? "anvil" : "furnace") + "-mode-" + juce::String::charToString(juce::juce_wchar('a' + mode)));
+                save(juce::String(std::array{"anvil", "furnace", "blade"}[(std::size_t) page]) + "-mode-" + juce::String::charToString(juce::juce_wchar('a' + mode)));
             }
         }
     }
@@ -749,6 +755,7 @@ void keyboardTests()
             require(!toggle(processor, dropforge::parameters::rhythmEnabled) && processor.currentPage() == 1, "keyboard power leaves the page open");
             require(editor->keyPressed(juce::KeyPress('1', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == 0, "Ctrl+1 opens Anvil");
             require(editor->keyPressed(juce::KeyPress('2', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == 1, "Ctrl+2 opens Furnace");
+            require(editor->keyPressed(juce::KeyPress('3', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == 2, "Ctrl+3 opens Blade");
             completed = true;
             juce::MessageManager::getInstance()->stopDispatchLoop();
         });

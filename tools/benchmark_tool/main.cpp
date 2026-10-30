@@ -24,8 +24,8 @@ int main(int argc, char** argv)
     using Clock = std::chrono::steady_clock;
     constexpr int trials = 5, maximumBlockSize = 8192;
     int blockSize = 512, sampleRate = 48000;
-    bool haveRate = false, haveBlock = false, haveAnvil = false, haveFurnace = false, haveDestroy = false, destroy = false, haveBlade = false, blade = true;
-    int anvilMode = 0, furnaceMode = 0;
+    bool haveRate = false, haveBlock = false, haveAnvil = false, haveFurnace = false, haveDestroy = false, destroy = false, haveBlade = false, blade = true, haveLead = false;
+    int anvilMode = 0, furnaceMode = 0, leadMode = 0;
     // A single letter a-d names a mode (SPEC section 12); -1 otherwise.
     const auto modeLetter = [](std::string_view text) noexcept
     {
@@ -35,21 +35,23 @@ int main(int argc, char** argv)
     {
         const std::string_view option = argv[i];
         if (i + 1 >= argc
-            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil" && option != "--furnace" && option != "--destroy" && option != "--blade")
+            || (option != "--sample-rate" && option != "--block-size" && option != "--anvil" && option != "--furnace" && option != "--destroy" && option != "--blade" && option != "--lead")
             || (option == "--sample-rate" && (haveRate || !readInteger(argv[i + 1], sampleRate)))
             || (option == "--block-size" && (haveBlock || !readInteger(argv[i + 1], blockSize)))
             || (option == "--anvil" && (haveAnvil || modeLetter(argv[i + 1]) < 0))
             || (option == "--furnace" && (haveFurnace || modeLetter(argv[i + 1]) < 0))
+            || (option == "--lead" && (haveLead || modeLetter(argv[i + 1]) < 0))
             || (option == "--destroy" && (haveDestroy || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1")))
             || (option == "--blade" && (haveBlade || (std::string_view(argv[i + 1]) != "0" && std::string_view(argv[i + 1]) != "1"))))
         {
-            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a-d] [--furnace a-d] [--destroy 0|1] [--blade 1|0]\n";
+            std::cerr << "Usage: benchmark_tool [--sample-rate 44100..192000] [--block-size 1..8192] [--anvil a-d] [--furnace a-d] [--lead a-d] [--destroy 0|1] [--blade 1|0]\n";
             return 2;
         }
         if (option == "--sample-rate") haveRate = true;
         else if (option == "--block-size") haveBlock = true;
         else if (option == "--anvil") { haveAnvil = true; anvilMode = modeLetter(argv[i + 1]); }
         else if (option == "--furnace") { haveFurnace = true; furnaceMode = modeLetter(argv[i + 1]); }
+        else if (option == "--lead") { haveLead = true; leadMode = modeLetter(argv[i + 1]); }
         else if (option == "--destroy") { haveDestroy = true; destroy = std::string_view(argv[i + 1]) == "1"; }
         else { haveBlade = true; blade = std::string_view(argv[i + 1]) == "1"; }
     }
@@ -79,6 +81,8 @@ int main(int argc, char** argv)
         engine.setFurnaceDestruction(destroy);
         // The CPU gate's workload (SPEC section 4): Blade on the top note too.
         engine.setLeadEnabled(blade);
+        engine.setLeadMode(leadMode);
+        engine.setLeadDestruction(destroy);
         engine.prepare(rate);
         master.prepare(rate);
         engine.setBassParameters(140.0f, 1.0f);

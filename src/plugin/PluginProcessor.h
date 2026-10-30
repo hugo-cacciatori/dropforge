@@ -43,9 +43,10 @@ public:
     // Held keys for the routing keyboard, published after every block.
     dropforge::InstrumentCore::Keys heldKeys() const noexcept
     {
-        return {keysLow.load(std::memory_order_relaxed), keysHigh.load(std::memory_order_relaxed), bassKey.load(std::memory_order_relaxed)};
+        return {keysLow.load(std::memory_order_relaxed), keysHigh.load(std::memory_order_relaxed), bassKey.load(std::memory_order_relaxed),
+                leadKey.load(std::memory_order_relaxed)};
     }
-    // Which suite page the editor shows (0 Anvil, 1 Furnace, in signal order).
+    // Which suite page the editor shows (0 Anvil, 1 Furnace, 2 Blade, in signal order).
     // A per-session view preference only: it is not saved and never changes the sound.
     int currentPage() const noexcept { return page.load(std::memory_order_relaxed); }
     void showPage(int index) noexcept { page.store(index, std::memory_order_relaxed); }
@@ -69,6 +70,8 @@ private:
     std::atomic<float>* rhythmDestroy = nullptr;
     std::atomic<float>* leadEnabled = nullptr;
     std::atomic<float>* leadLevel = nullptr;
+    std::atomic<float>* leadMode = nullptr;
+    std::atomic<float>* leadDestroy = nullptr;
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};
@@ -76,6 +79,6 @@ private:
     void publishMeters() noexcept;
     std::atomic<int> page{0};
     std::atomic<std::uint64_t> keysLow{0}, keysHigh{0};
-    std::atomic<int> bassKey{-1};
+    std::atomic<int> bassKey{-1}, leadKey{-1};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DropforgeProcessor)
 };

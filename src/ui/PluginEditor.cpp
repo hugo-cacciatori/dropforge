@@ -53,9 +53,10 @@ DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
     pages[1] = std::make_unique<InstrumentPage>(state, PageSpec{furnaceStyle, ids::rhythmEnabled, ids::rhythmMode, ids::rhythmLevel, ids::rhythmDestroy,
         {{ids::rhythmMono, "Mono", "folds the wall to the centre, for a tight, focused chord without phasing."},
          {ids::rhythmDrop, "Drop", "plays the wall an octave down, in unison with Anvil, for the heaviest drops."}}});
+    pages[2] = std::make_unique<InstrumentPage>(state, PageSpec{bladeStyle, ids::leadEnabled, ids::leadMode, ids::leadLevel, ids::leadDestroy, {}});
     for (int page = 0; page < pageCount; ++page)
     {
-        auto& tab = *(tabs[(size_t) page] = std::make_unique<InstrumentTab>(page == 0 ? anvilStyle : furnaceStyle));
+        auto& tab = *(tabs[(size_t) page] = std::make_unique<InstrumentTab>(pages[(size_t) page]->pageSpec().style));
         const juce::String title = tab.getButtonText();
         tab.setTooltip(title + ": click to open its page; right-click (or Alt+Enter) switches " + title + " on or off. Ctrl+"
                        + juce::String(page + 1) + " opens it from anywhere.");
@@ -156,7 +157,7 @@ void DropforgeEditor::paintCanvas(juce::Graphics& g)
     g.setColour(colours::edge.withAlpha(0.6f));
     g.drawHorizontalLine(headerArea.getBottom(), 0.0f, static_cast<float>(designWidth));
     // A thin rule in every instrument's identity colour under the product mark.
-    const std::array<juce::Colour, 2> identities{anvilStyle.identity, furnaceStyle.identity};
+    const std::array<juce::Colour, 3> identities{anvilStyle.identity, furnaceStyle.identity, bladeStyle.identity};
     for (size_t i = 0; i < identities.size(); ++i)
     {
         g.setColour(identities[i]);
@@ -164,7 +165,7 @@ void DropforgeEditor::paintCanvas(juce::Graphics& g)
     }
     g.setColour(colours::faint);
     g.setFont(valueFont(12.0f));
-    g.drawText("HEAVY SYNTH SUITE", juce::Rectangle<int>(100, 52, 160, 18), juce::Justification::centredLeft, false);
+    g.drawText("HEAVY SYNTH SUITE", juce::Rectangle<int>(134, 52, 160, 18), juce::Justification::centredLeft, false);
     g.setColour(juce::Colour(0xff0f1113));
     g.fillRect(footerArea);
     g.setColour(colours::edge.withAlpha(0.6f));
@@ -200,7 +201,7 @@ void DropforgeEditor::resized()
 
 void DropforgeEditor::togglePower(int page)
 {
-    auto* parameter = owner.parameterState().getParameter(page == 0 ? ids::bassEnabled : ids::rhythmEnabled);
+    auto* parameter = owner.parameterState().getParameter(pages[(size_t) page]->pageSpec().powerId);
     parameter->beginChangeGesture();
     parameter->setValueNotifyingHost(parameter->getValue() >= 0.5f ? 0.0f : 1.0f);
     parameter->endChangeGesture();
@@ -221,8 +222,8 @@ void DropforgeEditor::timerCallback()
     const auto current = juce::jlimit(0, pageCount - 1, owner.currentPage());
     auto& state = owner.parameterState();
     const auto keys = owner.heldKeys();
-    keyboard.show(keys.low, keys.high, keys.bassNote, state.getRawParameterValue(ids::bassEnabled)->load() >= 0.5f,
-                  state.getRawParameterValue(ids::rhythmEnabled)->load() >= 0.5f);
+    keyboard.show(keys.low, keys.high, keys.bassNote, keys.leadNote, state.getRawParameterValue(ids::bassEnabled)->load() >= 0.5f,
+                  state.getRawParameterValue(ids::rhythmEnabled)->load() >= 0.5f, state.getRawParameterValue(ids::leadEnabled)->load() >= 0.5f);
     for (int index = 0; index < pageCount; ++index)
     {
         auto& tab = *tabs[(size_t) index];
@@ -250,7 +251,7 @@ void DropforgeEditor::timerCallback()
     };
     auto description = describe(juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse());
     if (description.isEmpty()) description = describe(juce::Component::getCurrentlyFocusedComponent());
-    if (description.isEmpty()) description = "Play chords: Anvil takes the lowest key an octave down, Furnace plays the wall. Hover any control for help.";
+    if (description.isEmpty()) description = "Play chords: Anvil takes the lowest key an octave down, Furnace plays the wall, Blade the top key. Hover any control for help.";
     hoverHelp.setText(description.replaceCharacter('\n', ' '), juce::dontSendNotification);
 }
 

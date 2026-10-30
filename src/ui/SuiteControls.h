@@ -317,14 +317,15 @@ public:
     RoutingKeyboard()
     {
         setTitle("Routing keyboard");
-        setTooltip("Routing keyboard: held keys light orange where Furnace plays them; the blue bar marks the one key Anvil plays an octave down.");
+        setTooltip("Routing keyboard: held keys light orange where Furnace plays them; the blue bar below marks Anvil's key (played an octave down), the cyan bar above marks Blade's.");
         setInterceptsMouseClicks(true, false);
     }
     // Repaints only when the held keys or power changed.
-    void show(std::uint64_t low, std::uint64_t high, int bass, bool anvilOn, bool furnaceOn)
+    void show(std::uint64_t low, std::uint64_t high, int bass, int lead, bool anvilOn, bool furnaceOn, bool bladeOn)
     {
-        if (low == heldLow && high == heldHigh && bass == bassNote && anvilOn == anvil && furnaceOn == furnace) return;
-        heldLow = low; heldHigh = high; bassNote = bass; anvil = anvilOn; furnace = furnaceOn;
+        if (low == heldLow && high == heldHigh && bass == bassNote && lead == leadNote && anvilOn == anvil && furnaceOn == furnace
+            && bladeOn == blade) return;
+        heldLow = low; heldHigh = high; bassNote = bass; leadNote = lead; anvil = anvilOn; furnace = furnaceOn; blade = bladeOn;
         repaint();
     }
     bool isHeld(int note) const noexcept
@@ -336,7 +337,8 @@ public:
         const auto whites = countWhites(lowest, highest);
         const auto keyWidth = getWidth() / static_cast<float>(whites);
         const auto height = static_cast<float>(getHeight());
-        const auto furnaceColour = furnaceStyle.identity, anvilColour = anvilStyle.identity;
+        const auto furnaceColour = furnaceStyle.identity, anvilColour = anvilStyle.identity, bladeColour = bladeStyle.identity;
+        const auto bar = std::max(4.0f, height * 0.18f);
         // White keys first, then black keys over them.
         for (const bool blackPass : {false, true})
         {
@@ -346,13 +348,19 @@ public:
                 const auto area = keyArea(note, keyWidth, height);
                 const auto held = isHeld(note);
                 auto fill = blackPass ? juce::Colour(0xff0c0d0f) : juce::Colour(0xffc9ccd1);
-                if (held) fill = furnace ? furnaceColour : (anvil && note == bassNote ? anvilColour : colours::dimText);
+                if (held) fill = furnace ? furnaceColour : anvil && note == bassNote ? anvilColour
+                                                         : blade && note == leadNote ? bladeColour : colours::dimText;
                 g.setColour(fill);
                 g.fillRect(area.reduced(blackPass ? 0.0f : 0.5f, 0.0f));
                 if (anvil && note == bassNote)
                 {
                     g.setColour(anvilColour);
-                    g.fillRect(area.withTop(area.getBottom() - std::max(4.0f, height * 0.18f)).reduced(1.0f, 0.0f));
+                    g.fillRect(area.withTop(area.getBottom() - bar).reduced(1.0f, 0.0f));
+                }
+                if (blade && held && note == leadNote)
+                {
+                    g.setColour(bladeColour);
+                    g.fillRect(area.withHeight(bar).reduced(1.0f, 0.0f));
                 }
             }
         }
@@ -369,7 +377,7 @@ private:
         return {x, 0.0f, keyWidth * 0.64f, height * 0.6f};
     }
     std::uint64_t heldLow = 0, heldHigh = 0;
-    int bassNote = -1;
-    bool anvil = true, furnace = true;
+    int bassNote = -1, leadNote = -1;
+    bool anvil = true, furnace = true, blade = false;
 };
 }

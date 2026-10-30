@@ -64,6 +64,8 @@ public:
     void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }
     // Blade (SPEC section 3): power and Level.
     void setLead(bool on, float levelDb) noexcept { engine.setLeadEnabled(on); engine.setLeadLevel(levelDb); }
+    // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
+    void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
     // Diagnostic voicing for renders and tests. The plugin keeps the fixed
     // 140 Hz split and 0.5 drive the owner chose; it never calls this.
     void setBassParameters(float splitHz, float drive) noexcept
@@ -95,8 +97,8 @@ public:
     }
     Meters takeMeters() noexcept { return std::exchange(meters, Meters{}); }
     // The routing keyboard's view (SPEC section 6): one bit per held MIDI
-    // note, and the key Anvil plays (-1 while it plays none).
-    struct Keys { std::uint64_t low = 0, high = 0; int bassNote = -1; };
+    // note, the key Anvil plays (-1 while it plays none) and Blade's top key.
+    struct Keys { std::uint64_t low = 0, high = 0; int bassNote = -1, leadNote = -1; };
     Keys heldKeys() const noexcept
     {
         Keys keys;
@@ -105,6 +107,7 @@ public:
             (note < 64 ? keys.low : keys.high) |= std::uint64_t{1} << (note & 63);
         });
         keys.bassNote = engine.bassTarget().note;
+        keys.leadNote = engine.leadTarget().note;
         return keys;
     }
 

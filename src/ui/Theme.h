@@ -27,6 +27,7 @@ struct InstrumentStyle
 
 inline const InstrumentStyle anvilStyle{"ANVIL", "Anvil", "Bass: the lowest key an octave down, exactly mono.", juce::Colour(0xff5b8fd0)};
 inline const InstrumentStyle furnaceStyle{"FURNACE", "Furnace", "Chord wall: every held key, wide and heavy.", juce::Colour(0xffef7a2a)};
+inline const InstrumentStyle bladeStyle{"BLADE", "Blade", "Lead: the highest key, mono, in front of the wall.", juce::Colour(0xff7fd6e6)};
 
 inline const std::array<const char*, 4> modeLetters{"A", "B", "C", "D"};
 inline const std::array<const char*, 4> modeNames{"Forge", "Riot", "Halo", "Alloy"};

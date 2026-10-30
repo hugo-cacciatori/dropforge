@@ -19,7 +19,8 @@ struct Options
     double tail = 0.1;
     float outputDb = 0.0f, anvilLevelDb = 0.0f, bladeLevelDb = 0.0f;
     float splitHz = 140.0f, drive = 0.5f;
-    bool bassEnabled = true, rhythmEnabled = true, bladeEnabled = false;
+    bool bassEnabled = true, rhythmEnabled = true, bladeEnabled = false, bladeDestroy = false;
+    std::string blade = "a";
     dropforge::LayerMask mask = dropforge::LayerMask::all;
     std::string maskName = "all";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
@@ -60,6 +61,12 @@ Options parse(int argc, char** argv)
         else if (flag == "--bass-enabled") options.bassEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--rhythm-enabled") options.rhythmEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--blade-enabled") options.bladeEnabled = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--blade-destroy") options.bladeDestroy = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--blade")
+        {
+            options.blade = argv[i + 1];
+            if (options.blade.size() != 1 || options.blade[0] < 'a' || options.blade[0] > 'd') throw std::runtime_error("Blade mode must be a, b, c or d");
+        }
         else if (flag == "--block-size") options.block = integer(argv[i + 1], 1, 65536);
         else if (flag == "--tail-seconds")
         {
@@ -212,6 +219,7 @@ void render(const Options& options)
     core.setDestruction(options.anvilDestroy, options.furnaceDestroy);
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
     core.setLead(options.bladeEnabled, options.bladeLevelDb);
+    core.setLeadMode(options.blade[0] - 'a', options.bladeDestroy);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -274,6 +282,8 @@ void render(const Options& options)
     metrics->setProperty("rhythm_enabled", options.rhythmEnabled);
     metrics->setProperty("blade_enabled", options.bladeEnabled);
     metrics->setProperty("blade_level_db", options.bladeLevelDb);
+    metrics->setProperty("blade", juce::String(options.blade));
+    metrics->setProperty("blade_destroy", options.bladeDestroy);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -312,6 +322,7 @@ int main(int argc, char** argv)
                      "  [--anvil-destroy 0|1] [--furnace-destroy 0|1] (Destruction; default 0)\n"
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "  [--blade-enabled 0|1] [--blade-level-db 0] (Blade power, default off, and Level)\n"
+                     "  [--blade a|b|c|d] [--blade-destroy 0|1] (Blade mode, default a, and Destruction)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

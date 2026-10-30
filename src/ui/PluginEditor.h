@@ -25,7 +25,7 @@ public:
     juce::Button& panicButton() noexcept { return panic; }
     juce::Label& helpLine() noexcept { return hoverHelp; }
     dropforge::ui::RoutingKeyboard& routingKeyboard() noexcept { return keyboard; }
-    static constexpr int pageCount = 2;
+    static constexpr int pageCount = 3; // Anvil, Furnace, Blade: signal order
 
 private:
     struct Canvas final : juce::Component

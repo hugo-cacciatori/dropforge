@@ -46,13 +46,22 @@ float largestStep(const std::vector<float>& audio, std::size_t from, std::size_t
         step = std::max(step, std::abs(audio[i] - audio[i - 1]));
     return step;
 }
-Engine leadEngine(double rate = 48000.0, bool bass = true, bool rhythm = true)
+Engine leadEngine(double rate = 48000.0, bool bass = true, bool rhythm = true, int mode = 0, bool destroy = false)
 {
     Engine engine;
     engine.setLayersEnabled(bass, rhythm);
     engine.setLeadEnabled(true);
+    engine.setLeadMode(mode);
+    engine.setLeadDestruction(destroy);
     engine.prepare(rate);
     return engine;
+}
+double shortTermLufs(const std::vector<float>& left, const std::vector<float>& right)
+{
+    auto meter = std::make_unique<dsp_core::LoudnessMeter>();
+    meter->prepare(48000.0);
+    for (std::size_t i = 0; i < left.size(); ++i) meter->process(left[i], right[i]);
+    return meter->shortTermMaxLufs();
 }
 
 void offByDefaultAndMono()
@@ -133,13 +142,12 @@ void determinism()
 void aliasing()
 {
     double worst = -300.0;
+    for (int mode = 0; mode < 4; ++mode)
+    for (const bool destroy : {false, true})
     for (const double rate : {44100.0, 48000.0})
         for (const int note : {72, 84, 96})
         {
-            Engine engine;
-            engine.setLayersEnabled(false, false);
-            engine.setLeadEnabled(true);
-            engine.prepare(rate);
+            auto engine = leadEngine(rate, false, false, mode, destroy);
             engine.noteOn(1, note, 127);
             const auto length = static_cast<std::size_t>(rate / 2.0);
             const auto audio = render(engine, static_cast<int>(rate / 4.0 + length)).lead;
@@ -151,7 +159,8 @@ void aliasing()
                 windowed[i] = w * audio[audio.size() - length + i];
                 windowSum += w;
             }
-            const auto f0 = 440.0 * std::exp2((note - 69) / 12.0);
+            // Halo (C) adds a sine an octave down: its series starts at half the note.
+            const auto f0 = 440.0 * std::exp2((note - 69) / 12.0) * (mode == 2 ? 0.5 : 1.0);
             double near = 0.0, far = 0.0;
             for (double hz = 40.0; hz < rate / 2.0; hz += 2.0)
             {
@@ -160,11 +169,17 @@ void aliasing()
                 for (const auto value : windowed) { sum += value * rotation; rotation *= step; }
                 const auto power = std::norm(sum);
                 const auto k = std::max(1.0, std::round(hz / f0));
-                (std::abs(hz - k * f0) <= 0.25 * f0 ? near : far) += power;
+                // Detuned oscillators spread each harmonic by +-hz x detune
+                // (doubled for the drive's intermodulation); the near zone
+                // widens with it, keeping at least a fifth of each gap measured.
+                const auto spread = 2.0 * hz * (std::exp2(dropforge::BladeVoice::design(mode, destroy).detuneCents / 1200.0) - 1.0);
+                const auto zone = std::min(0.25 * f0 + spread, 0.4 * f0);
+                (std::abs(hz - k * f0) <= zone ? near : far) += power;
             }
             const auto aliasDb = 10.0 * std::log10(std::max(2.0 * far, 1.0e-30) / near);
             worst = std::max(worst, aliasDb);
-            std::cout << "blade rate=" << rate << " note=" << note << " off_harmonic_db=" << aliasDb << '\n';
+            std::cout << "blade mode=" << static_cast<char>('A' + mode) << " destroy=" << destroy << " rate=" << rate
+                      << " note=" << note << " off_harmonic_db=" << aliasDb << '\n';
             require(aliasDb < -50.0, "Blade's energy off its harmonics stays 50 dB down");
         }
     std::cout << "blade_worst_alias_db=" << worst << '\n';
@@ -173,13 +188,7 @@ void aliasing()
 // In front of the mix, never louder than Furnace (SPEC section 4).
 void balance()
 {
-    const auto loudness = [](const std::vector<float>& left, const std::vector<float>& right)
-    {
-        auto meter = std::make_unique<dsp_core::LoudnessMeter>();
-        meter->prepare(48000.0);
-        for (std::size_t i = 0; i < left.size(); ++i) meter->process(left[i], right[i]);
-        return meter->shortTermMaxLufs();
-    };
+    const auto loudness = shortTermLufs;
     auto engine = leadEngine();
     for (const int note : {40, 47, 52, 55, 64}) engine.noteOn(1, note, 127);
     const auto audio = render(engine, 48000 * 4);
@@ -191,6 +200,66 @@ void balance()
 }
 }
 
+// Each mode lands within 1 LU of A; Destruction within +1/-1.5 LU of its
+// clean mode (SPEC section 12): switching changes flavour, not volume.
+void modeLoudness()
+{
+    const auto measure = [](int mode, bool destroy)
+    {
+        double sum = 0.0;
+        for (const int note : {57, 64, 71}) // A3, E4, B4: typical lead range
+        {
+            auto engine = leadEngine(48000.0, false, false, mode, destroy);
+            engine.noteOn(1, note, 127);
+            const auto audio = render(engine, 48000 * 4);
+            sum += shortTermLufs(audio.lead, audio.lead);
+        }
+        return sum / 3.0;
+    };
+    const auto reference = measure(0, false);
+    for (int mode = 0; mode < 4; ++mode)
+    {
+        const auto clean = measure(mode, false), destroyed = measure(mode, true);
+        std::cout << "blade mode=" << static_cast<char>('A' + mode) << " clean_vs_a_lu=" << clean - reference
+                  << " destroyed_vs_clean_lu=" << destroyed - clean << '\n';
+        require(std::abs(clean - reference) <= 1.0, "each Blade mode is within 1 LU of A");
+        require(destroyed - clean <= 1.0 && destroyed - clean >= -1.5, "destroyed Blade stays within +1/-1.5 LU of its clean mode");
+    }
+}
+
+// Switching mode and Destruction under a held note: click-free (no steeper
+// than any mode's own steady sound) and identical at every block size.
+void modeSwitching()
+{
+    float natural = 0.0f;
+    for (int mode = 0; mode < 4; ++mode)
+        for (const bool destroy : {false, true})
+        {
+            auto steady = leadEngine(48000.0, false, false, mode, destroy);
+            steady.noteOn(1, 64, 120);
+            natural = std::max(natural, largestStep(render(steady, 24000).lead, 4800, 24000));
+        }
+    const auto run = [](int block)
+    {
+        auto engine = leadEngine(48000.0, false, false);
+        engine.noteOn(1, 64, 120);
+        auto audio = render(engine, 9600, block).lead;
+        for (int step = 1; step <= 7; ++step)
+        {
+            engine.setLeadMode(step % 4);
+            engine.setLeadDestruction(step % 2 == 1);
+            const auto more = render(engine, 4800, block).lead;
+            audio.insert(audio.end(), more.begin(), more.end());
+        }
+        return audio;
+    };
+    const auto a = run(512);
+    require(a == run(1) && a == run(73), "Blade mode switches render identically at blocks 1, 73 and 512");
+    const auto step = largestStep(a, 9000, a.size());
+    std::cout << "blade_switch_step=" << step << " natural_step=" << natural << '\n';
+    require(step <= 1.1f * natural, "switching Blade's mode or Destruction does not click");
+}
+
 int main()
 {
     offByDefaultAndMono();
@@ -198,5 +267,7 @@ int main()
     determinism();
     aliasing();
     balance();
+    modeLoudness();
+    modeSwitching();
     return 0;
 }

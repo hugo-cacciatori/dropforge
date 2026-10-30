@@ -59,6 +59,11 @@ public:
     // tracked while it is off, so switching it on during a chord plays at once.
     void setLeadEnabled(bool on) noexcept;
     void setLeadLevel(float db) noexcept;
+    // Blade's mode (0-3 = A-D) and Destruction (SPEC section 12): switched
+    // like Anvil's, in place while silent, a 30 ms crossfade while sounding.
+    void setLeadMode(int mode) noexcept { leadChoice.mode = std::clamp(mode, 0, 3); updateBlade(); }
+    void setLeadDestruction(bool on) noexcept { leadChoice.destroy = on; updateBlade(); }
+    int leadMode() const noexcept { return leadChoice.mode; }
     // Blade's weight against Furnace at default Levels (SPEC section 4): in
     // front but not louder. -13 dB puts a held top note about 3 LU under the
     // reference chord's wall; tuned by ear in listening round 3.
@@ -151,7 +156,17 @@ private:
     int bassChannel = 1; // Retain selected bend during the note-off release.
     NoteRouter router;
     void updateBass(NoteRouter::Change change) noexcept;
-    BladeVoice blade;
+    // Two Blade voices, like Anvil's: the playing slot and, during a mode
+    // crossfade, the outgoing one.
+    std::array<BladeVoice, 2> blades;
+    std::size_t leadSlot = 0;
+    int leadFade = 0;
+    struct LeadSetup { int mode = 0; bool destroy = false; bool operator==(const LeadSetup&) const = default; };
+    std::array<LeadSetup, 2> leadSetup{};
+    LeadSetup leadChoice{};
+    void updateBlade() noexcept;
+    void configureBlade(std::size_t slot) noexcept;
+    void finishLeadFade() noexcept;
     bool leadEnabled = false, leadSuspended = true;
     int leadChannel = 1;
     dsp_core::LinearRamp leadPower, leadMixLevel, leadBendOffset;

@@ -54,6 +54,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::bassMode, 1}, "Anvil Mode", modes, 0));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{dropforge::parameters::rhythmMode, 1}, "Furnace Mode", modes, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::leadMode, 1}, "Blade Mode", modes, 0));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{dropforge::parameters::rhythmMono, 1}, "Furnace Mono", false));
     layout.add(std::make_unique<juce::AudioParameterBool>(
@@ -62,6 +64,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::bassDestroy, 1}, "Anvil Destruction", false));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{dropforge::parameters::rhythmDestroy, 1}, "Furnace Destruction", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::leadDestroy, 1}, "Blade Destruction", false));
     return layout;
 }
 
@@ -82,6 +86,8 @@ DropforgeProcessor::DropforgeProcessor()
     rhythmDestroy = state.getRawParameterValue(dropforge::parameters::rhythmDestroy);
     leadEnabled = state.getRawParameterValue(dropforge::parameters::leadEnabled);
     leadLevel = state.getRawParameterValue(dropforge::parameters::leadLevel);
+    leadMode = state.getRawParameterValue(dropforge::parameters::leadMode);
+    leadDestroy = state.getRawParameterValue(dropforge::parameters::leadDestroy);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -154,6 +160,7 @@ void DropforgeProcessor::applyModes() noexcept
     core.setModes(index(bassMode), index(rhythmMode));
     core.setFurnaceOptions(readToggle(rhythmMono, false), readToggle(rhythmDrop, false));
     core.setDestruction(readToggle(bassDestroy, false), readToggle(rhythmDestroy, false));
+    core.setLeadMode(index(leadMode), readToggle(leadDestroy, false));
 }
 
 void DropforgeProcessor::publishMeters() noexcept
@@ -175,6 +182,7 @@ void DropforgeProcessor::publishMeters() noexcept
     keysLow.store(keys.low, std::memory_order_relaxed);
     keysHigh.store(keys.high, std::memory_order_relaxed);
     bassKey.store(keys.bassNote, std::memory_order_relaxed);
+    leadKey.store(keys.leadNote, std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* DropforgeProcessor::createEditor()
