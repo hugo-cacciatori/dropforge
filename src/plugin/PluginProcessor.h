@@ -78,6 +78,7 @@ private:
     std::atomic<float>* bendRangeChoice = nullptr;
     std::atomic<float>* glideEnabled = nullptr;
     std::atomic<float>* glideTime = nullptr;
+    std::atomic<float>* impactEnabled = nullptr;
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};

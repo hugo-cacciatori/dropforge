@@ -10,6 +10,7 @@
 #include <dsp_core/Oversampler4x.h>
 #include <dsp_core/Svf.h>
 #include <dsp_core/WavetableBank.h>
+#include "Impact.h"
 
 namespace dropforge
 {
@@ -86,6 +87,7 @@ public:
         rate = sampleRate;
         transitionSamples = std::max(1, transition);
         envelope.prepare(attackSamples, releaseSamples);
+        impact.prepare(rate);
         oversampler.prepare();
         pulseOffset = dsp_core::WavetableOscillator::phaseOffset(pulseWidth);
         dsp_core::sineTable(); // build the shared tables off the audio thread
@@ -115,6 +117,7 @@ public:
         pendingAttack = false;
         lastOutput = transitionStart = 0.0f;
         transitionRemaining = 0;
+        impact.reset();
     }
     // A hard attack. A sounding voice keeps its oscillators running (no phase
     // jump) and crossfades from its last output once the new note arrives.
@@ -146,6 +149,8 @@ public:
     // The pitch the voice plays now, before bend (for glides and tests).
     double currentPitch() const noexcept { return std::exp2(logPitch.value()); }
     void stop() noexcept { envelope.stop(); }
+    // Impact (SPEC section 3): the accent of a struck key, after start().
+    void strike(int noteVelocity) noexcept { impact.strike(noteVelocity); }
     void retargetVelocity(int noteVelocity) noexcept
     {
         velocity.setTarget(std::clamp(noteVelocity, 1, 127) / 127.0, transitionSamples);
@@ -169,6 +174,9 @@ public:
         const auto offset = biasOffset;
         auto input = source();
         if (current.preLowpassHz > 0.0) input = preLowpass.next(input);
+        // Impact drives the attack harder; its punch rides the aligned frame.
+        const auto accent = impact.active() ? impact.next() : 0.0f;
+        if (accent > 0.0f) input *= 1.0f + ImpactAccent::driveBoost * accent;
         const auto driven = oversampler.next(input, [drive, bias, fold, offset, table = dsp_core::sineTable()](float x) noexcept
         {
             // Slightly asymmetric: even harmonics give each lead a vocal edge;
@@ -183,7 +191,9 @@ public:
             }
             return y;
         });
-        const auto frame = aligned.next({static_cast<float>(envelope.next() * velocity.next()), pendingAttack});
+        auto amplitude = static_cast<float>(envelope.next() * velocity.next());
+        if (accent > 0.0f) amplitude *= 1.0f + ImpactAccent::punchBoost * accent;
+        const auto frame = aligned.next({amplitude, pendingAttack});
         pendingAttack = false;
         if (frame.attack)
         {
@@ -314,6 +324,7 @@ private:
     const float* sineTable = dsp_core::sineTable();
     dsp_core::FixedEnvelope envelope;
     dsp_core::LinearRamp velocity;
+    ImpactAccent impact;
     std::array<dsp_core::WavetableOscillator, 3> oscillators{};
     dsp_core::Oversampler4xFloat oversampler;
     AlignedFrames aligned;

@@ -85,6 +85,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{dropforge::parameters::glideMs, 1}, "Glide Time", glideRange, 80.0f,
         juce::AudioParameterFloatAttributes{}.withLabel("ms")));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID{dropforge::parameters::impactOn, 1}, "Impact", false));
     return layout;
 }
 
@@ -113,6 +115,7 @@ DropforgeProcessor::DropforgeProcessor()
     bendRangeChoice = state.getRawParameterValue(dropforge::parameters::bendRange);
     glideEnabled = state.getRawParameterValue(dropforge::parameters::glideOn);
     glideTime = state.getRawParameterValue(dropforge::parameters::glideMs);
+    impactEnabled = state.getRawParameterValue(dropforge::parameters::impactOn);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -189,7 +192,7 @@ void DropforgeProcessor::applyModes() noexcept
     const auto octave = leadOctave->load(std::memory_order_relaxed);
     constexpr std::array<int, 5> ranges{2, 5, 7, 12, 24};
     core.setPerformance(ranges[static_cast<std::size_t>(std::clamp(index(bendRangeChoice), 0, 4))], readToggle(glideEnabled, false),
-                        glideTime->load(std::memory_order_relaxed));
+                        glideTime->load(std::memory_order_relaxed), readToggle(impactEnabled, false));
     core.setLeadPlaying(std::clamp(index(leadPortamento), 0, 2), leadPortamentoMs->load(std::memory_order_relaxed),
                         std::isfinite(octave) ? static_cast<int>(std::lround(octave)) : 0);
 }

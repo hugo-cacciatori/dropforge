@@ -118,6 +118,9 @@ public:
     // Glide (SPEC section 3): Anvil and Furnace slide to new pitches over the
     // time (0-500 ms) instead of jumping; Blade has its own Portamento.
     void setGlide(bool on, float milliseconds) noexcept;
+    // Impact (SPEC section 3): each struck key accents its attack on every
+    // layer it starts, by its velocity. Off by default.
+    void setImpact(bool on) noexcept { impactOn = on; }
     // Test hook: the pitch Anvil's voice sounds now, before bend.
     double bassPitch() const noexcept { return bassVoices[bassSlot].currentPitch(); }
     void noteOn(int channel, int note, int velocity) noexcept;
@@ -199,6 +202,10 @@ private:
     float glideMs = 80.0f;
     int glideSamples = 0;
     int activeGlide() const noexcept { return glideOn ? std::max(1, glideSamples) : 0; }
+    // Impact accents only attacks a key press causes: a fallback after a
+    // release, a mode crossfade or a layer switched on is no strike.
+    bool impactOn = false, striking = false;
+    int strikeVelocity(int velocity) const noexcept { return impactOn && striking ? velocity : 0; }
     // The solo rule (SPEC section 3): an instrument playing alone follows the
     // newest key; with another instrument on, Anvil the lowest, Blade the highest.
     NoteRouter::BassRule bassRule() const noexcept

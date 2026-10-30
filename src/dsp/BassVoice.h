@@ -16,6 +16,7 @@
 #include "AnvilReese.h"
 #include "AnvilRound.h"
 #include "BassExciter.h"
+#include "Impact.h"
 
 namespace dropforge
 {
@@ -67,6 +68,7 @@ public:
         round.prepare(splitTarget, rate);
         reese.prepare(splitTarget, rate);
         finalLowpass.set(dsp_core::Svf::Type::lowpass, 5000.0, rate);
+        impact.prepare(rate);
         reset();
     }
     void reset() noexcept
@@ -82,6 +84,7 @@ public:
         velocity.reset(0.0);
         transitionRemaining = 0;
         pendingAttack = false;
+        impact.reset();
     }
     // Not real-time: select before prepare() or between renders.
     void setGrit(AnvilGrit candidate) noexcept { setMode(candidate, destroyed); }
@@ -120,6 +123,8 @@ public:
         pendingAttack = true;
     }
     void stop() noexcept { envelope.stop(); }
+    // Impact (SPEC section 3): the accent of a struck key, after start().
+    void strike(int noteVelocity) noexcept { impact.strike(noteVelocity); }
     // Glide (SPEC section 3): a new pitch without a new attack, sliding
     // evenly in pitch over slideSamples from the pitch sounding now.
     void legato(double hz, int slideSamples) noexcept
@@ -172,6 +177,13 @@ public:
                 if (excitation != nullptr) sources = *excitation;
             }
         }
+        // Impact pushes the grit harder for a moment; the sine stays clean.
+        const auto accent = impact.active() ? impact.next() : 0.0f;
+        if (accent > 0.0f)
+        {
+            const auto boost = 1.0f + ImpactAccent::driveBoost * accent;
+            growlSource *= boost; sources.dry *= boost; sources.unison *= boost;
+        }
         // Only the selected candidate runs; the other's state stays idle.
         float dryDriven = 0.0f, unisonDriven = 0.0f, growlDriven = 0.0f;
         if (grit != AnvilGrit::a) growlDriven = withMode([&](auto& voice) noexcept { return voice.drive(growlSource, amount); });
@@ -184,7 +196,10 @@ public:
         }
         // Sine, envelope and attack marker share the FIR's integer delay.
         // This delays release/retrigger events too, not just steady waveforms.
-        const auto frame = aligned.next({sine, static_cast<float>(envelope.next() * velocity.next()), pendingAttack, hz});
+        // Impact's punch rides the same delay, landing on the driven attack.
+        auto amplitude = static_cast<float>(envelope.next() * velocity.next());
+        if (accent > 0.0f) amplitude *= 1.0f + ImpactAccent::punchBoost * accent;
+        const auto frame = aligned.next({sine, amplitude, pendingAttack, hz});
         // Stronger grit must neither cancel the clean fundamental nor bring
         // competing sub harmonics back. Track its notch at FIR-aligned pitch.
         if (frame.frequency > 0.0 && frame.frequency != currentNotchHz)
@@ -296,6 +311,7 @@ private:
     dsp_core::LinearRamp slide; // log2 pitch while gliding
     double slideTarget = 0.0;
     bool sliding = false;
+    ImpactAccent impact;
     std::uint32_t phase = 0;
     float lastOutput = 0.0f, transitionStart = 0.0f;
     int transitionSamples = 89, smoothingSamples = 441, transitionRemaining = 0;

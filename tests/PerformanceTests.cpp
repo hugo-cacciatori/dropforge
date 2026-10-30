@@ -6,7 +6,7 @@
 #include <iostream>
 #include <vector>
 
-// Performance controls (SPEC section 3): Bend Range and polyphonic Glide.
+// Performance controls (SPEC section 3): Bend Range, polyphonic Glide and Impact.
 namespace
 {
 using dropforge::Engine;
@@ -170,6 +170,120 @@ void determinism()
     const auto a = run(512);
     require(a == run(1) && a == run(73), "Glide and bend render identically at blocks 1, 73 and 512");
 }
+
+// Impact (SPEC section 3). Each layer alone through its tap: an E2 chord in a
+// mix (Anvil E1, Furnace E2/B2/E3, Blade E3) held 300 ms, then released.
+constexpr int impactHold = 14400, impactTail = 4800;
+std::vector<float> impactRun(dropforge::LayerMask mask, bool impact, int velocity, int block = 512)
+{
+    // Each layer alone through the diagnostic mask; the others still run.
+    std::vector<float> layer(impactHold + impactTail), right(layer.size());
+    Engine masked;
+    masked.setLeadEnabled(true);
+    masked.setImpact(impact);
+    masked.prepare(rate);
+    for (const int n : {40, 47, 52}) masked.noteOn(1, n, velocity);
+    for (int at = 0; at < impactHold; at += block)
+        masked.process(layer.data() + at, right.data() + at, std::min(block, impactHold - at), mask);
+    for (const int n : {40, 47, 52}) masked.noteOff(1, n);
+    for (int at = impactHold; at < impactHold + impactTail; at += block)
+        masked.process(layer.data() + at, right.data() + at, std::min(block, impactHold + impactTail - at), mask);
+    return layer;
+}
+double rmsDb(const std::vector<float>& audio, int from, int to)
+{
+    double sum = 0.0;
+    for (int i = from; i < to; ++i) sum += static_cast<double>(audio[static_cast<std::size_t>(i)]) * audio[static_cast<std::size_t>(i)];
+    return 10.0 * std::log10(std::max(sum / (to - from), 1e-30));
+}
+// Brightness: the level of the first difference (a gentle treble tilt)
+// against the level itself.
+double brightnessDb(const std::vector<float>& audio, int from, int to)
+{
+    std::vector<float> slope(audio.size());
+    for (auto i = static_cast<std::size_t>(std::max(from, 1)); i < static_cast<std::size_t>(to); ++i) slope[i] = audio[i] - audio[i - 1];
+    return rmsDb(slope, from, to) - rmsDb(audio, from, to);
+}
+int firstSound(const std::vector<float>& audio)
+{
+    for (std::size_t i = 0; i < audio.size(); ++i) if (std::abs(audio[i]) > 1e-6f) return static_cast<int>(i);
+    return -1;
+}
+int lastSound(const std::vector<float>& audio)
+{
+    for (auto i = audio.size(); i-- > 0;) if (std::abs(audio[i]) > 1e-4f) return static_cast<int>(i);
+    return -1;
+}
+
+void impactAccent()
+{
+    const int attack = Engine::latencySamples, window = attack + 960; // the first 20 ms
+    const int steadyFrom = 7200, steadyTo = 13920;                     // 150-290 ms
+    const struct { dropforge::LayerMask mask; const char* name; } layers[] = {
+        {dropforge::LayerMask::bass, "anvil"}, {dropforge::LayerMask::rhythm, "furnace"}, {dropforge::LayerMask::lead, "blade"}};
+    for (const auto& layer : layers)
+    {
+        const auto off = impactRun(layer.mask, false, 127), on = impactRun(layer.mask, true, 127);
+        const auto softOff = impactRun(layer.mask, false, 40), softOn = impactRun(layer.mask, true, 40);
+        const auto lift = rmsDb(on, attack, window) - rmsDb(off, attack, window);
+        const auto softLift = rmsDb(softOn, attack, window) - rmsDb(softOff, attack, window);
+        const auto steady = rmsDb(on, steadyFrom, steadyTo) - rmsDb(off, steadyFrom, steadyTo);
+        const auto brighter = brightnessDb(on, attack, window) - brightnessDb(off, attack, window);
+        std::cout << "impact " << layer.name << " lift_db=" << lift << " soft_lift_db=" << softLift
+                  << " steady_db=" << steady << " brighter_db=" << brighter << '\n';
+        require(lift > 1.0 && lift < 6.0, "Impact lifts a hard attack by a few dB");
+        require(brighter > 0.2, "Impact brightens the attack (a harder drive)");
+        require(softLift > 0.0 && softLift < 0.6 * lift, "a soft hit gets a much smaller accent");
+        require(std::abs(steady) < 0.1, "the accent is gone well within 150 ms: the held sound is unchanged");
+        require(firstSound(on) == firstSound(off), "Impact never moves the attack");
+        require(std::abs(lastSound(on) - lastSound(off)) <= 4, "Impact never changes the release");
+    }
+    // Only a key press accents: legato moves have no attack, and a layer
+    // switched on during a held chord is no strike.
+    const auto legatoLift = [](dropforge::LayerMask mask, int note)
+    {
+        std::array<std::vector<float>, 2> runs;
+        for (int impact = 0; impact < 2; ++impact)
+        {
+            Engine engine;
+            engine.setLeadEnabled(true);
+            engine.setGlide(true, 80.0f);
+            engine.setLeadPortamento(Engine::Portamento::legato, 60.0f);
+            engine.setImpact(impact == 1);
+            engine.prepare(rate);
+            engine.noteOn(1, 40, 127);
+            engine.noteOn(1, 52, 127);
+            std::vector<float> audio(19200), right(19200);
+            engine.process(audio.data(), right.data(), 14400, mask);
+            engine.noteOn(1, note, 127);
+            engine.process(audio.data() + 14400, right.data() + 14400, 4800, mask);
+            runs[static_cast<std::size_t>(impact)] = audio;
+        }
+        return rmsDb(runs[1], 14400, 15600) - rmsDb(runs[0], 14400, 15600);
+    };
+    const auto anvilLegato = legatoLift(dropforge::LayerMask::bass, 35), bladeLegato = legatoLift(dropforge::LayerMask::lead, 59);
+    std::cout << "impact legato anvil_db=" << anvilLegato << " blade_db=" << bladeLegato << '\n';
+    require(std::abs(anvilLegato) < 0.3 && std::abs(bladeLegato) < 0.3, "a legato move is no attack: no accent");
+    std::array<std::vector<float>, 2> joined;
+    for (int impact = 0; impact < 2; ++impact)
+    {
+        Engine engine;
+        engine.setImpact(impact == 1);
+        engine.prepare(rate);
+        for (const int n : {40, 47, 52}) engine.noteOn(1, n, 127);
+        std::vector<float> audio(9600), right(9600);
+        engine.process(audio.data(), right.data(), 2400, dropforge::LayerMask::lead);
+        engine.setLeadEnabled(true);
+        engine.process(audio.data() + 2400, right.data() + 2400, 7200, dropforge::LayerMask::lead);
+        joined[static_cast<std::size_t>(impact)] = audio;
+    }
+    require(firstSound(joined[1]) > 0 && joined[0] == joined[1], "switching Blade on under a held chord is no strike");
+    // Block-size invariance with strikes during the run.
+    const auto a = impactRun(dropforge::LayerMask::all, true, 110, 512);
+    require(a == impactRun(dropforge::LayerMask::all, true, 110, 1) && a == impactRun(dropforge::LayerMask::all, true, 110, 73),
+            "Impact renders identically at blocks 1, 73 and 512");
+    std::cout << "impact passed\n";
+}
 }
 
 int main()
@@ -178,6 +292,7 @@ int main()
     furnaceGlide();
     anvilGlide();
     determinism();
+    impactAccent();
     std::cout << "performance passed\n";
     return 0;
 }

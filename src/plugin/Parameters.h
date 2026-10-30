@@ -31,4 +31,5 @@ inline constexpr auto leadOctave = "lead_octave";
 inline constexpr auto bendRange = "bend_range";
 inline constexpr auto glideOn = "glide_on";
 inline constexpr auto glideMs = "glide_ms";
+inline constexpr auto impactOn = "impact_on";
 }

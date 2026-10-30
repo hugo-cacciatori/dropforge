@@ -221,19 +221,22 @@ void Engine::noteOn(int channel, int note, int velocity) noexcept
         return;
     }
     const auto changes = router.noteOn(channel, note, velocity);
+    striking = true;
     updateBass(changes.bass);
     updateLead(changes.lead);
     if (rhythmEnabled) startRhythm(channel, note, velocity);
+    striking = false;
 }
 
 void Engine::startRhythm(int channel, int note, int velocity) noexcept
 {
     const auto ratio = bend[static_cast<std::size_t>(channel - 1)].value();
     const auto age = ++serial;
-    furnaces[furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide());
+    const auto accent = strikeVelocity(velocity);
+    furnaces[furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide(), accent);
     // The outgoing mode plays along until its fade ends, so the crossfade
     // carries the same notes on both sides.
-    if (furnaceFade > 0) furnaces[1 - furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide());
+    if (furnaceFade > 0) furnaces[1 - furnaceSlot].start(channel, note, velocity, ratio, age, activeGlide(), accent);
 }
 
 void Engine::noteOff(int channel, int note) noexcept
@@ -256,6 +259,7 @@ void Engine::startBass(BassVoice& voice) noexcept
 {
     const auto key = router.bassKey();
     voice.start(NoteRouter::bassFrequency(key.note), key.velocity);
+    voice.strike(strikeVelocity(key.velocity));
 }
 
 void Engine::updateBass(NoteRouter::Change change) noexcept
@@ -320,10 +324,14 @@ void Engine::updateLead(NoteRouter::Change change) noexcept
                 voice.legato(hz, portamentoSamples);
                 voice.retargetVelocity(key.velocity);
             }
-            else if (portamento == Portamento::always && lastLeadHz > 0.0)
-                voice.start(hz, key.velocity, portamentoSamples, lastLeadHz);
             else
-                voice.start(hz, key.velocity);
+            {
+                if (portamento == Portamento::always && lastLeadHz > 0.0)
+                    voice.start(hz, key.velocity, portamentoSamples, lastLeadHz);
+                else
+                    voice.start(hz, key.velocity);
+                voice.strike(strikeVelocity(key.velocity));
+            }
         }
         leadKeyHeld = true;
         lastLeadHz = hz;

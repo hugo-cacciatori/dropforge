@@ -9,6 +9,7 @@
 #include <dsp_core/MultibandDynamics.h>
 #include <dsp_core/Svf.h>
 #include "FurnaceDesign.h"
+#include "Impact.h"
 #include "NoteRouter.h"
 #include "RhythmBus.h"
 #include "RhythmOscillators.h"
@@ -65,6 +66,7 @@ public:
         {
             voice = Voice{};
             voice.envelope.prepare(attackSamples, releaseSamples);
+            voice.impact.prepare(rate);
         }
         for (auto& bus : buses) bus.reset();
         dynamics.reset();
@@ -93,8 +95,10 @@ public:
     // glideSamples > 0 (Glide on, SPEC section 3): the new note takes over the
     // releasing voice nearest in pitch and slides from it without a new
     // attack, so a chord change glides note for note; with no releasing voice
-    // it starts fresh, sliding from the nearest sounding pitch.
-    void start(int channel, int note, int velocity, double bendRatio, std::uint64_t age, int glideSamples = 0) noexcept
+    // it starts fresh, sliding from the nearest sounding pitch. accent > 0
+    // (Impact, SPEC section 3) accents a fresh attack; a legato takeover has none.
+    void start(int channel, int note, int velocity, double bendRatio, std::uint64_t age, int glideSamples = 0,
+               int accent = 0) noexcept
     {
         if (glideSamples > 0)
         {
@@ -120,7 +124,7 @@ public:
                 return;
             }
             const auto from = nearest != nullptr ? nearest->pitch() : 0.0;
-            startVoice(channel, note, velocity, bendRatio, age);
+            startVoice(channel, note, velocity, bendRatio, age, accent);
             if (from > 0.0)
             {
                 auto& fresh = voices[NoteRouter::pickVoice(voices, channel, note)];
@@ -130,11 +134,12 @@ public:
             }
             return;
         }
-        startVoice(channel, note, velocity, bendRatio, age);
+        startVoice(channel, note, velocity, bendRatio, age, accent);
     }
-    void startVoice(int channel, int note, int velocity, double bendRatio, std::uint64_t age) noexcept
+    void startVoice(int channel, int note, int velocity, double bendRatio, std::uint64_t age, int accent = 0) noexcept
     {
         auto& voice = voices[NoteRouter::pickVoice(voices, channel, note)];
+        voice.impact.strike(accent);
         voice.sliding = false;
         voice.transitionStart = voice.lastOutput;
         voice.transitionRemaining = transitionSamples;
@@ -179,6 +184,7 @@ public:
         std::fill_n(sumRight.begin(), samples, 0.0f);
         std::fill_n(strongestEnvelope.begin(), samples, 0.0);
         std::fill_n(strongestVelocity.begin(), samples, 0.0);
+        std::fill_n(strongestAccent.begin(), samples, 0.0f);
         // Voice by voice over the block, in 32-bit float; the sums add voices in
         // bank order, so results never depend on which voices are free.
         for (auto& voice : voices)
@@ -205,6 +211,7 @@ public:
                 const auto envelope = voice.envelope.next();
                 strongestVelocity[i] = std::max(strongestVelocity[i], voice.velocity);
                 strongestEnvelope[i] = std::max(strongestEnvelope[i], envelope);
+                if (voice.impact.active()) strongestAccent[i] = std::max(strongestAccent[i], voice.impact.next());
                 const auto gain = static_cast<float>(envelope * voice.velocity);
                 output.left *= gain;
                 output.right *= gain;
@@ -239,9 +246,20 @@ public:
             wasActive = velocity > 0.0;
             const auto current = level.next();
             const auto envelope = static_cast<float>(strongestEnvelope[i]);
-            const auto restore = static_cast<float>(current), normalize = static_cast<float>(1.0 / current);
-            auto drivenLeft = buses[0].drive(sumLeft[i] * normalize, envelope, restore);
-            auto drivenRight = buses[1].drive(sumRight[i] * normalize, envelope, restore);
+            auto restore = static_cast<float>(current);
+            const auto normalize = static_cast<float>(1.0 / current);
+            auto inputLeft = sumLeft[i] * normalize, inputRight = sumRight[i] * normalize;
+            // Impact: the newest strike drives the wall harder for a moment, and
+            // its punch joins the restored level, which the bus delays to land
+            // on the driven attack and applies after the dynamics, unsquashed.
+            if (const auto accent = strongestAccent[i]; accent > 0.0f)
+            {
+                const auto boost = 1.0f + ImpactAccent::driveBoost * accent;
+                inputLeft *= boost; inputRight *= boost;
+                restore *= 1.0f + ImpactAccent::punchBoost * accent;
+            }
+            auto drivenLeft = buses[0].drive(inputLeft, envelope, restore);
+            auto drivenRight = buses[1].drive(inputRight, envelope, restore);
             // Dense and even: the multiband dynamics see the velocity-normalized
             // wall, so velocity still changes loudness only.
             dynamics.process(drivenLeft, drivenRight);
@@ -288,6 +306,7 @@ private:
         int controlCountdown = 0;
         std::uint64_t age = 0;
         bool keyDown = false;
+        ImpactAccent impact;
         bool active() const noexcept { return envelope.active() || transitionRemaining > 0; }
         // Glide: frequency follows the slide, landing exactly on the target.
         dsp_core::LinearRamp slide;
@@ -321,6 +340,6 @@ private:
     double rate = 44100.0;
     int attackSamples = 45, releaseSamples = 265, transitionSamples = 89;
     Block strongestEnvelope{}, strongestVelocity{};
-    std::array<float, controlBlock> sumLeft{}, sumRight{};
+    std::array<float, controlBlock> sumLeft{}, sumRight{}, strongestAccent{};
 };
 }

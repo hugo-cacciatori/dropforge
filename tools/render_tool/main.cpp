@@ -22,7 +22,7 @@ struct Options
     bool bassEnabled = true, rhythmEnabled = true, bladeEnabled = false, bladeDestroy = false;
     std::string blade = "a";
     int bladePortamento = 0, bladeOctave = 0, bendRange = 2;
-    bool glide = false;
+    bool glide = false, impact = false;
     float glideMs = 80.0f;
     float bladePortamentoMs = 60.0f;
     dropforge::LayerMask mask = dropforge::LayerMask::all;
@@ -88,6 +88,7 @@ Options parse(int argc, char** argv)
                 throw std::runtime_error("Bend Range must be 2, 5, 7, 12 or 24");
         }
         else if (flag == "--glide") options.glide = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--impact") options.impact = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--glide-ms")
         {
             const auto ms = number(argv[i + 1]);
@@ -253,7 +254,7 @@ void render(const Options& options)
     core.setLead(options.bladeEnabled, options.bladeLevelDb);
     core.setLeadMode(options.blade[0] - 'a', options.bladeDestroy);
     core.setLeadPlaying(options.bladePortamento, options.bladePortamentoMs, options.bladeOctave);
-    core.setPerformance(options.bendRange, options.glide, options.glideMs);
+    core.setPerformance(options.bendRange, options.glide, options.glideMs, options.impact);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -324,6 +325,7 @@ void render(const Options& options)
     metrics->setProperty("bend_range", options.bendRange);
     metrics->setProperty("glide", options.glide);
     metrics->setProperty("glide_ms", options.glideMs);
+    metrics->setProperty("impact", options.impact);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -364,7 +366,7 @@ int main(int argc, char** argv)
                      "  [--blade-enabled 0|1] [--blade-level-db 0] (Blade power, default off, and Level)\n"
                      "  [--blade a|b|c|d] [--blade-destroy 0|1] (Blade mode, default a, and Destruction)\n"
                      "  [--blade-porta off|legato|always] [--blade-porta-ms 60] [--blade-octave -1|0|1]\n"
-                     "  [--bend-range 2|5|7|12|24] [--glide 0|1] [--glide-ms 80]\n"
+                     "  [--bend-range 2|5|7|12|24] [--glide 0|1] [--glide-ms 80] [--impact 0|1]\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }
