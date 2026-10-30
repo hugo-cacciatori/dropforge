@@ -16,6 +16,7 @@ inline void dispatchMidi(Engine& engine, const std::uint8_t* bytes, int size) no
             engine.allNotesOff(channel);
             engine.pitchBend(channel, 8192);
         }
+        engine.resetWheel();
         return;
     }
     if (size < 3 || bytes[1] > 127 || bytes[2] > 127)
@@ -27,10 +28,15 @@ inline void dispatchMidi(Engine& engine, const std::uint8_t* bytes, int size) no
         case 0x90: engine.noteOn(channel, bytes[1], bytes[2]); break;
         case 0xe0: engine.pitchBend(channel, bytes[1] | (bytes[2] << 7)); break;
         case 0xb0:
-            if (bytes[1] == 120 || bytes[1] == 123)
+            if (bytes[1] == 1)
+                engine.modWheel(bytes[2]); // from any channel: one global wheel
+            else if (bytes[1] == 120 || bytes[1] == 123)
                 engine.allNotesOff(channel);
             else if (bytes[1] == 121)
+            {
                 engine.pitchBend(channel, 8192);
+                engine.resetWheel();
+            }
             break; // CC64 is deliberately ignored, including after a note-off.
         default: break;
     }

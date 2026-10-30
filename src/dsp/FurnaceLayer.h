@@ -10,6 +10,7 @@
 #include <dsp_core/Svf.h>
 #include "FurnaceDesign.h"
 #include "Impact.h"
+#include "Roar.h"
 #include "NoteRouter.h"
 #include "RhythmBus.h"
 #include "RhythmOscillators.h"
@@ -55,6 +56,7 @@ public:
         }
         // Mono low end: the side signal loses everything below about 150 Hz.
         sideHighpass.set(dsp_core::Svf::Type::highpass, monoBelowHz, rate);
+        for (auto& formant : roar) formant.prepare(rate, roarLowHz, roarHighHz, roarPeakDb, roarTrim);
         dynamics.prepare(design.dynamics, rate);
         dynamics.setDepth(dynamicsDepth);
         clear();
@@ -69,6 +71,7 @@ public:
             voice.impact.prepare(rate);
         }
         for (auto& bus : buses) bus.reset();
+        for (auto& formant : roar) formant.reset();
         dynamics.reset();
         sideHighpass.reset();
         level.reset(1.0); levelTarget = 1.0; wasActive = false;
@@ -176,8 +179,14 @@ public:
         return std::any_of(voices.begin(), voices.end(), [](const Voice& v) { return v.active(); });
     }
 
-    // Renders count samples of the finished Furnace into left/right.
-    void render(int count, const std::array<Block, 16>& bendRatio, Block& left, Block& right) noexcept
+    // The mod wheel's Roar on the wall (SPEC section 3): a brighter sweep than
+    // Anvil's, on both sides alike so the image stays put.
+    static constexpr double roarLowHz = 500.0, roarHighHz = 2500.0, roarPeakDb = 9.0;
+    static constexpr float roarTrim = 0.75f;
+    // Renders count samples of the finished Furnace into left/right; roar
+    // holds the wheel's Roar depth per sample (0 leaves the wall untouched).
+    void render(int count, const std::array<Block, 16>& bendRatio, Block& left, Block& right,
+                const std::array<float, controlBlock>& roarDepth) noexcept
     {
         const auto samples = static_cast<std::size_t>(count);
         std::fill_n(sumLeft.begin(), samples, 0.0f);
@@ -258,11 +267,21 @@ public:
                 inputLeft *= boost; inputRight *= boost;
                 restore *= 1.0f + ImpactAccent::punchBoost * accent;
             }
+            const auto wheel = roarDepth[i];
+            if (wheel > 0.0f)
+            {
+                const auto boost = RoarFormant::drive(wheel);
+                inputLeft *= boost; inputRight *= boost;
+            }
             auto drivenLeft = buses[0].drive(inputLeft, envelope, restore);
             auto drivenRight = buses[1].drive(inputRight, envelope, restore);
             // Dense and even: the multiband dynamics see the velocity-normalized
             // wall, so velocity still changes loudness only.
             dynamics.process(drivenLeft, drivenRight);
+            // Roar's formant sits before the final filters (after the dynamics,
+            // which would otherwise flatten the peak it sweeps).
+            drivenLeft = roar[0].process(drivenLeft, wheel);
+            drivenRight = roar[1].process(drivenRight, wheel);
             const auto processedLeft = buses[0].tone(drivenLeft);
             const auto processedRight = buses[1].tone(drivenRight);
             // Width still comes from independent synthesis. This final bounded
@@ -336,6 +355,7 @@ private:
     bool wasActive = false;
     dsp_core::Svf sideHighpass;
     dsp_core::MultibandDynamics dynamics;
+    std::array<RoarFormant, 2> roar;
     float dynamicsDepth = 1.0f;
     double rate = 44100.0;
     int attackSamples = 45, releaseSamples = 265, transitionSamples = 89;

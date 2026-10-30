@@ -42,6 +42,14 @@ void Engine::reset() noexcept
     wheels.fill(8192);
     bassKeyHeld = false;
     glideSamples = static_cast<int>(std::lround(rate * glideMs / 1000.0));
+    // The wheel returns to the saved Amount; Vibrato's phase restarts so a
+    // render always sounds the same.
+    wheelTarget = wheelSaved;
+    roarGoal = wheelMode == WheelMode::roar ? wheelTarget : 0.0;
+    vibratoGoal = wheelMode == WheelMode::vibrato ? wheelTarget : 0.0;
+    roarDepth.reset(roarGoal);
+    vibratoDepth.reset(vibratoGoal);
+    vibratoPhase = 0.0;
     // A pending change is applied now: nothing sounds after a reset.
     if (furnaceSetup[furnaceSlot] != furnaceTarget) { furnaceSetup[furnaceSlot] = furnaceTarget; furnaces[furnaceSlot].setDesign(furnaceForMode(furnaceTarget.mode, furnaceTarget.destroy)); }
     for (std::size_t slot = 0; slot < 2; ++slot) furnaces[slot].setDrop(furnaceSetup[slot].drop);
@@ -461,6 +469,42 @@ void Engine::setGlide(bool on, float milliseconds) noexcept
     glideSamples = static_cast<int>(std::lround(rate * glideMs / 1000.0));
 }
 
+void Engine::aimWheel(int samples) noexcept
+{
+    const auto roar = wheelMode == WheelMode::roar ? static_cast<double>(wheelTarget) : 0.0;
+    const auto vibrato = wheelMode == WheelMode::vibrato ? static_cast<double>(wheelTarget) : 0.0;
+    if (roar != roarGoal) { roarGoal = roar; roarDepth.setTarget(roar, samples); }
+    if (vibrato != vibratoGoal) { vibratoGoal = vibrato; vibratoDepth.setTarget(vibrato, samples); }
+}
+
+void Engine::setWheelMode(WheelMode mode) noexcept
+{
+    if (mode == wheelMode) return;
+    wheelMode = mode;
+    // One depth fades out while the other fades in: no jump, no retrigger.
+    aimWheel(static_cast<int>(std::ceil(rate * 0.020)));
+}
+
+void Engine::setWheelAmount(float amount) noexcept
+{
+    amount = std::isfinite(amount) ? std::clamp(amount, 0.0f, 1.0f) : 0.0f;
+    if (amount == wheelSaved) return;
+    wheelSaved = wheelTarget = amount;
+    aimWheel(fadeSamples);
+}
+
+void Engine::modWheel(int value) noexcept
+{
+    wheelTarget = std::clamp(value, 0, 127) / 127.0f;
+    aimWheel(fadeSamples);
+}
+
+void Engine::resetWheel() noexcept
+{
+    wheelTarget = wheelSaved;
+    aimWheel(fadeSamples);
+}
+
 void Engine::setLayerLevels(float bassDb, float rhythmDb) noexcept
 {
     const auto gain = [](float db) noexcept
@@ -493,6 +537,22 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     for (std::size_t channel = 0; channel < bend.size(); ++channel)
         for (std::size_t i = 0; i < samples; ++i)
             bendRatio[channel][i] = bend[channel].next();
+    // The wheel: Roar's depth for the layers, and Vibrato as a common pitch
+    // ratio on every channel's bend (so Anvil keeps its octave). Its phase
+    // runs from reset() on and never restarts with a note.
+    const auto increment = vibratoHz / rate;
+    for (std::size_t i = 0; i < samples; ++i)
+    {
+        roarBlock[i] = static_cast<float>(roarDepth.next());
+        const auto depth = vibratoDepth.next();
+        if (depth > 0.0)
+        {
+            const auto ratio = std::exp2(vibratoCents * depth * std::sin(6.283185307179586 * vibratoPhase) / 1200.0);
+            for (auto& channel : bendRatio) channel[i] *= ratio;
+        }
+        vibratoPhase += increment;
+        if (vibratoPhase >= 1.0) vibratoPhase -= 1.0;
+    }
     for (std::size_t i = 0; i < samples; ++i)
     {
         rhythmGain[i] = rhythmPower.next() * rhythmMixLevel.next();
@@ -511,10 +571,10 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
         return samples;
     };
     const auto rhythmCount = audibleUntil(rhythmSuspended, rhythmEnabled, rhythmGain);
-    furnaces[furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, rhythmLeft, rhythmRight);
+    furnaces[furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, rhythmLeft, rhythmRight, roarBlock);
     if (furnaceFade > 0)
     {
-        furnaces[1 - furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, outgoingLeft, outgoingRight);
+        furnaces[1 - furnaceSlot].render(static_cast<int>(rhythmCount), bendRatio, outgoingLeft, outgoingRight, roarBlock);
         for (std::size_t i = 0; i < rhythmCount && furnaceFade > 0; ++i)
         {
             float in = 1.0f, out = 0.0f;
@@ -545,6 +605,7 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     for (std::size_t i = 0; i < bassCount; ++i)
     {
         const auto ratio = bassBend[i] + bassBendOffset.next();
+        for (auto& voice : bassVoices) voice.setRoar(roarBlock[i]);
         auto value = bassVoices[bassSlot].next(ratio, component).output;
         if (bassFade > 0)
         {
@@ -568,6 +629,7 @@ void Engine::processBlock(float* left, float* right, int count, LayerMask output
     for (std::size_t i = 0; i < leadCount; ++i)
     {
         const auto ratio = leadBend[i] + leadBendOffset.next();
+        for (auto& voice : blades) voice.setRoar(roarBlock[i]);
         auto value = blades[leadSlot].next(ratio);
         if (leadFade > 0)
         {

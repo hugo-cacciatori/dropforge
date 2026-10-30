@@ -74,6 +74,15 @@ public:
         engine.setBendRange(bendRange);
         engine.setGlide(glide, glideMs);
     }
+    // The mod wheel (SPEC section 3): mode 0 Roar, 1 Vibrato; the saved
+    // Amount, taken when it changes (CC1 moves the wheel in between).
+    void setWheel(int mode, float amount) noexcept
+    {
+        engine.setWheelMode(mode == 1 ? Engine::WheelMode::vibrato : Engine::WheelMode::roar);
+        engine.setWheelAmount(amount);
+    }
+    // Where the wheel is now (0-1): the saved Amount or the latest CC1.
+    float wheelPosition() const noexcept { return engine.wheelPosition(); }
     // Blade's Portamento (0 Off, 1 Legato, 2 Always) and time, and Octave.
     void setLeadPlaying(int portamento, float milliseconds, int octave) noexcept
     {

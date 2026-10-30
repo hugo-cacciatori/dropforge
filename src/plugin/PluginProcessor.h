@@ -49,6 +49,8 @@ public:
     // Which suite page the editor shows (0 Anvil, 1 Furnace, 2 Blade, in signal order).
     // A per-session view preference only: it is not saved and never changes the sound.
     int currentPage() const noexcept { return page.load(std::memory_order_relaxed); }
+    // Where the mod wheel is now (0-1), CC1 included, for the footer.
+    float wheelPosition() const noexcept { return wheelNow.load(std::memory_order_relaxed); }
     void showPage(int index) noexcept { page.store(index, std::memory_order_relaxed); }
 
 private:
@@ -79,6 +81,9 @@ private:
     std::atomic<float>* glideEnabled = nullptr;
     std::atomic<float>* glideTime = nullptr;
     std::atomic<float>* impactEnabled = nullptr;
+    std::atomic<float>* wheelModeChoice = nullptr;
+    std::atomic<float>* wheelAmountValue = nullptr;
+    std::atomic<float> wheelNow{0.0f};
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};

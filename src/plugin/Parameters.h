@@ -32,4 +32,6 @@ inline constexpr auto bendRange = "bend_range";
 inline constexpr auto glideOn = "glide_on";
 inline constexpr auto glideMs = "glide_ms";
 inline constexpr auto impactOn = "impact_on";
+inline constexpr auto wheelMode = "wheel_mode";
+inline constexpr auto wheelAmount = "wheel_amount";
 }

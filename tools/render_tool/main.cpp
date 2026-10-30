@@ -23,6 +23,8 @@ struct Options
     std::string blade = "a";
     int bladePortamento = 0, bladeOctave = 0, bendRange = 2;
     bool glide = false, impact = false;
+    int wheelMode = 0;
+    float wheelAmount = 0.0f;
     float glideMs = 80.0f;
     float bladePortamentoMs = 60.0f;
     dropforge::LayerMask mask = dropforge::LayerMask::all;
@@ -89,6 +91,18 @@ Options parse(int argc, char** argv)
         }
         else if (flag == "--glide") options.glide = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--impact") options.impact = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--wheel-mode")
+        {
+            const std::string mode = argv[i + 1];
+            if (mode != "roar" && mode != "vibrato") throw std::runtime_error("Wheel mode must be roar or vibrato");
+            options.wheelMode = mode == "vibrato" ? 1 : 0;
+        }
+        else if (flag == "--wheel-amount")
+        {
+            const auto amount = number(argv[i + 1]);
+            if (amount < 0.0 || amount > 1.0) throw std::runtime_error("Wheel Amount must be 0 to 1");
+            options.wheelAmount = static_cast<float>(amount);
+        }
         else if (flag == "--glide-ms")
         {
             const auto ms = number(argv[i + 1]);
@@ -255,6 +269,7 @@ void render(const Options& options)
     core.setLeadMode(options.blade[0] - 'a', options.bladeDestroy);
     core.setLeadPlaying(options.bladePortamento, options.bladePortamentoMs, options.bladeOctave);
     core.setPerformance(options.bendRange, options.glide, options.glideMs, options.impact);
+    core.setWheel(options.wheelMode, options.wheelAmount);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -326,6 +341,8 @@ void render(const Options& options)
     metrics->setProperty("glide", options.glide);
     metrics->setProperty("glide_ms", options.glideMs);
     metrics->setProperty("impact", options.impact);
+    metrics->setProperty("wheel_mode", options.wheelMode == 1 ? "vibrato" : "roar");
+    metrics->setProperty("wheel_amount", options.wheelAmount);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -367,6 +384,7 @@ int main(int argc, char** argv)
                      "  [--blade a|b|c|d] [--blade-destroy 0|1] (Blade mode, default a, and Destruction)\n"
                      "  [--blade-porta off|legato|always] [--blade-porta-ms 60] [--blade-octave -1|0|1]\n"
                      "  [--bend-range 2|5|7|12|24] [--glide 0|1] [--glide-ms 80] [--impact 0|1]\n"
+                     "  [--wheel-mode roar|vibrato] [--wheel-amount 0] (MIDI CC1 also moves the wheel)\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

@@ -87,6 +87,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::AudioParameterFloatAttributes{}.withLabel("ms")));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{dropforge::parameters::impactOn, 1}, "Impact", false));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::wheelMode, 1}, "Wheel", juce::StringArray{"Roar", "Vibrato"}, 0));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{dropforge::parameters::wheelAmount, 1}, "Wheel Amount", juce::NormalisableRange<float>{0.0f, 1.0f}, 0.0f));
     return layout;
 }
 
@@ -116,6 +120,8 @@ DropforgeProcessor::DropforgeProcessor()
     glideEnabled = state.getRawParameterValue(dropforge::parameters::glideOn);
     glideTime = state.getRawParameterValue(dropforge::parameters::glideMs);
     impactEnabled = state.getRawParameterValue(dropforge::parameters::impactOn);
+    wheelModeChoice = state.getRawParameterValue(dropforge::parameters::wheelMode);
+    wheelAmountValue = state.getRawParameterValue(dropforge::parameters::wheelAmount);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -193,6 +199,7 @@ void DropforgeProcessor::applyModes() noexcept
     constexpr std::array<int, 5> ranges{2, 5, 7, 12, 24};
     core.setPerformance(ranges[static_cast<std::size_t>(std::clamp(index(bendRangeChoice), 0, 4))], readToggle(glideEnabled, false),
                         glideTime->load(std::memory_order_relaxed), readToggle(impactEnabled, false));
+    core.setWheel(std::clamp(index(wheelModeChoice), 0, 1), wheelAmountValue->load(std::memory_order_relaxed));
     core.setLeadPlaying(std::clamp(index(leadPortamento), 0, 2), leadPortamentoMs->load(std::memory_order_relaxed),
                         std::isfinite(octave) ? static_cast<int>(std::lround(octave)) : 0);
 }
@@ -217,6 +224,7 @@ void DropforgeProcessor::publishMeters() noexcept
     keysHigh.store(keys.high, std::memory_order_relaxed);
     bassKey.store(keys.bassNote, std::memory_order_relaxed);
     leadKey.store(keys.leadNote, std::memory_order_relaxed);
+    wheelNow.store(core.wheelPosition(), std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* DropforgeProcessor::createEditor()

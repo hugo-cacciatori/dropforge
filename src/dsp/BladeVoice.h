@@ -11,6 +11,7 @@
 #include <dsp_core/Svf.h>
 #include <dsp_core/WavetableBank.h>
 #include "Impact.h"
+#include "Roar.h"
 
 namespace dropforge
 {
@@ -88,6 +89,7 @@ public:
         transitionSamples = std::max(1, transition);
         envelope.prepare(attackSamples, releaseSamples);
         impact.prepare(rate);
+        roar.prepare(rate, roarLowHz, roarHighHz, roarPeakDb, roarTrim);
         oversampler.prepare();
         pulseOffset = dsp_core::WavetableOscillator::phaseOffset(pulseWidth);
         dsp_core::sineTable(); // build the shared tables off the audio thread
@@ -118,6 +120,7 @@ public:
         lastOutput = transitionStart = 0.0f;
         transitionRemaining = 0;
         impact.reset();
+        roar.reset();
     }
     // A hard attack. A sounding voice keeps its oscillators running (no phase
     // jump) and crossfades from its last output once the new note arrives.
@@ -151,6 +154,10 @@ public:
     void stop() noexcept { envelope.stop(); }
     // Impact (SPEC section 3): the accent of a struck key, after start().
     void strike(int noteVelocity) noexcept { impact.strike(noteVelocity); }
+    // The mod wheel's Roar depth (0-1) for the next sample (SPEC section 3).
+    void setRoar(float amount) noexcept { roarAmount = amount; }
+    static constexpr double roarLowHz = 600.0, roarHighHz = 3200.0, roarPeakDb = 10.0;
+    static constexpr float roarTrim = 0.8f;
     void retargetVelocity(int noteVelocity) noexcept
     {
         velocity.setTarget(std::clamp(noteVelocity, 1, 127) / 127.0, transitionSamples);
@@ -177,6 +184,7 @@ public:
         // Impact drives the attack harder; its punch rides the aligned frame.
         const auto accent = impact.active() ? impact.next() : 0.0f;
         if (accent > 0.0f) input *= 1.0f + ImpactAccent::driveBoost * accent;
+        if (roarAmount > 0.0f) input *= RoarFormant::drive(roarAmount);
         const auto driven = oversampler.next(input, [drive, bias, fold, offset, table = dsp_core::sineTable()](float x) noexcept
         {
             // Slightly asymmetric: even harmonics give each lead a vocal edge;
@@ -200,7 +208,7 @@ public:
             transitionStart = lastOutput;
             transitionRemaining = transitionSamples;
         }
-        auto output = current.gain * lowpass.next(bell2.next(bell.next(highpass.next(driven)))) * frame.amplitude;
+        auto output = current.gain * lowpass.next(bell2.next(bell.next(highpass.next(roar.process(driven, roarAmount))))) * frame.amplitude;
         if (transitionRemaining > 0)
         {
             const auto oldWeight = static_cast<float>(transitionRemaining--) / static_cast<float>(transitionSamples);
@@ -325,6 +333,8 @@ private:
     dsp_core::FixedEnvelope envelope;
     dsp_core::LinearRamp velocity;
     ImpactAccent impact;
+    RoarFormant roar;
+    float roarAmount = 0.0f;
     std::array<dsp_core::WavetableOscillator, 3> oscillators{};
     dsp_core::Oversampler4xFloat oversampler;
     AlignedFrames aligned;

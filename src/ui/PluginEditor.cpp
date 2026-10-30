@@ -38,13 +38,13 @@ SuiteLookAndFeel& suiteLook()
 }
 
 const juce::Rectangle<int> headerArea{0, 0, designWidth, 84};
-const juce::Rectangle<int> pageArea{24, 148, designWidth - 48, 470};
-// Footer: the routing keyboard above the help line.
-const juce::Rectangle<int> footerArea{0, 628, designWidth, designHeight - 628};
+const juce::Rectangle<int> pageArea{24, 148, designWidth - 48, 446};
+// Footer: the performance strip, the routing keyboard and the help line.
+const juce::Rectangle<int> footerArea{0, 604, designWidth, designHeight - 604};
 }
 
 DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
-    : AudioProcessorEditor(processor), owner(processor),
+    : AudioProcessorEditor(processor), owner(processor), strip(processor.parameterState()),
       outputAttachment(processor.parameterState(), ids::output, output)
 {
     setLookAndFeel(&suiteLook());
@@ -111,7 +111,8 @@ DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
     hoverHelp.setColour(juce::Label::textColourId, colours::dimText);
     hoverHelp.setJustificationType(juce::Justification::centredLeft);
     hoverHelp.setMinimumHorizontalScale(1.0f);
-    for (auto* child : std::initializer_list<juce::Component*>{&mark, &panic, &outputLabel, &output, &meter, &about, &keyboard, &hoverHelp})
+    strip.setExplicitFocusOrder(30);
+    for (auto* child : std::initializer_list<juce::Component*>{&mark, &panic, &outputLabel, &output, &meter, &about, &strip, &keyboard, &hoverHelp})
         canvas.addAndMakeVisible(child);
     addAndMakeVisible(canvas);
     layoutCanvas();
@@ -190,8 +191,9 @@ void DropforgeEditor::layoutCanvas()
         tabs[(size_t) page]->setBounds(pageArea.getX() + page * 240, 94, 232, 56);
         pages[(size_t) page]->setBounds(pageArea);
     }
-    keyboard.setBounds(footerArea.getX() + 24, footerArea.getY() + 8, footerArea.getWidth() - 48, 30);
-    hoverHelp.setBounds(footerArea.getX() + 24, footerArea.getY() + 42, footerArea.getWidth() - 48, 26);
+    strip.setBounds(footerArea.getX() + 24, footerArea.getY() + 6, footerArea.getWidth() - 48, 32);
+    keyboard.setBounds(footerArea.getX() + 24, footerArea.getY() + 44, footerArea.getWidth() - 48, 26);
+    hoverHelp.setBounds(footerArea.getX() + 24, footerArea.getY() + 72, footerArea.getWidth() - 48, 22);
 }
 
 void DropforgeEditor::resized()
@@ -223,6 +225,7 @@ void DropforgeEditor::timerCallback()
 {
     const auto meters = owner.takeMeters();
     meter.push(meters.peakLeft, meters.peakRight, meters.limiterReductionDb);
+    strip.showWheel(owner.wheelPosition());
     const auto current = juce::jlimit(0, pageCount - 1, owner.currentPage());
     auto& state = owner.parameterState();
     const auto keys = owner.heldKeys();

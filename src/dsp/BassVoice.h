@@ -17,6 +17,7 @@
 #include "AnvilRound.h"
 #include "BassExciter.h"
 #include "Impact.h"
+#include "Roar.h"
 
 namespace dropforge
 {
@@ -69,6 +70,9 @@ public:
         reese.prepare(splitTarget, rate);
         finalLowpass.set(dsp_core::Svf::Type::lowpass, 5000.0, rate);
         impact.prepare(rate);
+        // Roar on the grit only: the growl band, and the grit lifted at full
+        // wheel so the sweep reads over the sine.
+        roar.prepare(rate, roarLowHz, roarHighHz, roarPeakDb, roarTrim[destroyed ? 1 : 0][static_cast<std::size_t>(grit)]);
         reset();
     }
     void reset() noexcept
@@ -85,6 +89,7 @@ public:
         transitionRemaining = 0;
         pendingAttack = false;
         impact.reset();
+        roar.reset();
     }
     // Not real-time: select before prepare() or between renders.
     void setGrit(AnvilGrit candidate) noexcept { setMode(candidate, destroyed); }
@@ -125,6 +130,14 @@ public:
     void stop() noexcept { envelope.stop(); }
     // Impact (SPEC section 3): the accent of a struck key, after start().
     void strike(int noteVelocity) noexcept { impact.strike(noteVelocity); }
+    // The mod wheel's Roar depth (0-1) for the next sample (SPEC section 3).
+    void setRoar(float amount) noexcept { roarAmount = amount; }
+    static constexpr double roarLowHz = 300.0, roarHighHz = 1400.0, roarPeakDb = 12.0;
+    // The grit's level at full wheel per mode A-D, clean then destroyed: each
+    // mode's grit rests at its own depth under the sine (A about 35 dB, the
+    // destroyed growl level with it), and full Roar brings every one to about
+    // 6 dB under, so the growl reads over the sub in any mode.
+    static constexpr std::array<std::array<float, 4>, 2> roarTrim{{{10.3f, 1.23f, 3.38f, 2.45f}, {1.35f, 0.77f, 2.46f, 1.82f}}};
     // Glide (SPEC section 3): a new pitch without a new attack, sliding
     // evenly in pitch over slideSamples from the pitch sounding now.
     void legato(double hz, int slideSamples) noexcept
@@ -179,9 +192,10 @@ public:
         }
         // Impact pushes the grit harder for a moment; the sine stays clean.
         const auto accent = impact.active() ? impact.next() : 0.0f;
-        if (accent > 0.0f)
+        if (accent > 0.0f || roarAmount > 0.0f)
         {
-            const auto boost = 1.0f + ImpactAccent::driveBoost * accent;
+            auto boost = 1.0f + ImpactAccent::driveBoost * accent;
+            if (roarAmount > 0.0f) boost *= RoarFormant::drive(roarAmount);
             growlSource *= boost; sources.dry *= boost; sources.unison *= boost;
         }
         // Only the selected candidate runs; the other's state stays idle.
@@ -222,6 +236,7 @@ public:
                   : component == BassComponent::unisonGrit ? unison : dryMix * dry + unisonMix * unison;
         }
         if (destroyed) upper *= destroyedGain[static_cast<std::size_t>(grit)];
+        upper = roar.process(upper, roarAmount);
         pendingAttack = false;
         if (frame.attack)
         {
@@ -312,6 +327,8 @@ private:
     double slideTarget = 0.0;
     bool sliding = false;
     ImpactAccent impact;
+    RoarFormant roar;
+    float roarAmount = 0.0f;
     std::uint32_t phase = 0;
     float lastOutput = 0.0f, transitionStart = 0.0f;
     int transitionSamples = 89, smoothingSamples = 441, transitionRemaining = 0;

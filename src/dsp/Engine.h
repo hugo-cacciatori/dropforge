@@ -121,6 +121,20 @@ public:
     // Impact (SPEC section 3): each struck key accents its attack on every
     // layer it starts, by its velocity. Off by default.
     void setImpact(bool on) noexcept { impactOn = on; }
+    // The mod wheel (SPEC section 3): one Amount (0-1) set by the host
+    // parameter or by CC1 from any channel, the latest event winning, and
+    // smoothed over 5 ms. Roar sweeps the growl on every layer; Vibrato is a
+    // 5 Hz pitch LFO up to +-25 cents. A mode change crossfades over 20 ms.
+    enum class WheelMode { roar, vibrato };
+    void setWheelMode(WheelMode mode) noexcept;
+    // The saved Amount: taken whenever the host value changes.
+    void setWheelAmount(float amount) noexcept;
+    // CC1, 0-127: transient, never saved.
+    void modWheel(int value) noexcept;
+    // Back to the saved Amount (CC121, system reset; also every reset()).
+    void resetWheel() noexcept;
+    float wheelPosition() const noexcept { return wheelTarget; }
+    static constexpr double vibratoHz = 5.0, vibratoCents = 25.0;
     // Test hook: the pitch Anvil's voice sounds now, before bend.
     double bassPitch() const noexcept { return bassVoices[bassSlot].currentPitch(); }
     void noteOn(int channel, int note, int velocity) noexcept;
@@ -206,6 +220,11 @@ private:
     // release, a mode crossfade or a layer switched on is no strike.
     bool impactOn = false, striking = false;
     int strikeVelocity(int velocity) const noexcept { return impactOn && striking ? velocity : 0; }
+    WheelMode wheelMode = WheelMode::roar;
+    float wheelSaved = 0.0f, wheelTarget = 0.0f;
+    double roarGoal = 0.0, vibratoGoal = 0.0, vibratoPhase = 0.0;
+    dsp_core::LinearRamp roarDepth, vibratoDepth;
+    void aimWheel(int samples) noexcept;
     // The solo rule (SPEC section 3): an instrument playing alone follows the
     // newest key; with another instrument on, Anvil the lowest, Blade the highest.
     NoteRouter::BassRule bassRule() const noexcept
@@ -236,5 +255,6 @@ private:
     using Block = std::array<double, controlBlock>;
     std::array<Block, 16> bendRatio{};
     Block rhythmGain{}, bassGain{}, leadGain{}, rhythmLeft{}, rhythmRight{}, outgoingLeft{}, outgoingRight{};
+    std::array<float, controlBlock> roarBlock{};
 };
 }

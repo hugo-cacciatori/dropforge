@@ -201,7 +201,7 @@ public:
         modes.setBounds(getWidth() - 24 - 600, 12, 600, 54);
         const auto plate = plateArea();
         levelLabel.setBounds(plate.getX() + 60, plate.getY() + 104, 220, 24);
-        level.setBounds(plate.getX() + 60, plate.getY() + 130, 220, 230);
+        level.setBounds(plate.getX() + 60, plate.getY() + 130, 220, 200);
         auto column = optionColumn().withTrimmedTop(30);
         for (auto& button : optionButtons) button->setBounds(column.removeFromTop(60).withTrimmedBottom(12));
         // Playing controls: the first choice across the column, then the

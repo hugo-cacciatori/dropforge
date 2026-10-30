@@ -130,7 +130,7 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 22, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop; Blade Portamento, time and Octave; Bend Range, Glide and Impact");
+    require(source.getParameters().size() == 24, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop; Blade Portamento, time and Octave; Bend Range, Glide, Impact and the wheel");
     require(!toggle(source, dropforge::parameters::leadEnabled), "Blade is off by default");
     for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode, dropforge::parameters::leadMode})
     {
@@ -706,6 +706,34 @@ void editorTests(const juce::String& snapshot)
     setToggle(processor, ids::bassEnabled, true);
     midi.clear(); processor.processBlock(audio, midi);
     require(processor.heldKeys().bassNote == 40, "Anvil's key returns with its power");
+
+    // The footer's performance strip drives the same host parameters, and the
+    // wheel's Amount dial shows a hardware wheel (CC1) without saving it.
+    auto& strip = editor->performanceStrip();
+    strip.impactSwitch().setToggleState(true, juce::sendNotificationSync);
+    strip.glideSwitch().setToggleState(true, juce::sendNotificationSync);
+    strip.bendSelector().button(3).onClick();
+    strip.wheelSelector().button(1).onClick();
+    require(toggle(processor, ids::impactOn) && toggle(processor, ids::glideOn) && choice(processor, ids::bendRange) == 3
+            && choice(processor, ids::wheelMode) == 1, "the performance strip sets Impact, Glide, Bend Range and the wheel mode");
+    require(strip.bendSelector().size() == 5 && strip.wheelSelector().size() == 2, "Bend offers 2/5/7/12/24; the wheel Roar and Vibrato");
+    midi.clear();
+    midi.addEvent(juce::MidiMessage::controllerEvent(3, 1, 64), 0);
+    processor.processBlock(audio, midi);
+    refreshUi();
+    require(std::abs(processor.wheelPosition() - 64.0f / 127.0f) < 1e-6f
+            && std::abs(strip.wheelAmountKnob().markerPosition() - 64.0f / 127.0f) < 1e-6f
+            && processor.parameterState().getRawParameterValue(ids::wheelAmount)->load() == 0.0f,
+            "CC1 from any channel moves the wheel live, shown on the Amount dial, never saved");
+    midi.clear();
+    midi.addEvent(juce::MidiMessage::controllerEvent(3, 121, 0), 0);
+    processor.processBlock(audio, midi);
+    refreshUi();
+    require(processor.wheelPosition() == 0.0f && strip.wheelAmountKnob().markerPosition() < 0.0f, "reset controllers returns the wheel");
+    strip.impactSwitch().setToggleState(false, juce::sendNotificationSync);
+    strip.glideSwitch().setToggleState(false, juce::sendNotificationSync);
+    strip.bendSelector().button(0).onClick();
+    strip.wheelSelector().button(0).onClick();
     if (snapshot.isNotEmpty())
     {
         setOutput(processor, 0);

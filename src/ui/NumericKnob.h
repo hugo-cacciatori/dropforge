@@ -21,6 +21,15 @@ public:
     }
     ~NumericKnob() override { entry.onFocusLost = nullptr; }
     std::function<void(bool)> onEntryGesture;
+    // Compact: a small dial with its value beside it, for the footer strip.
+    void setCompact(bool shouldBeCompact) { compact = shouldBeCompact; resized(); repaint(); }
+    // A dot on the arc at a live position (0-1), e.g. the mod wheel moved by
+    // CC1 away from the saved value; below 0 hides it.
+    void setMarker(float proportion)
+    {
+        if (proportion != marker) { marker = proportion; repaint(); }
+    }
+    float markerPosition() const noexcept { return marker; }
     void mouseDown(const juce::MouseEvent& event) override
     {
         // The value under the dial is the place to type (right-click works anywhere).
@@ -53,8 +62,9 @@ public:
     {
         using namespace dropforge::ui;
         const auto accent = findColour(juce::Slider::rotarySliderFillColourId);
-        const auto dial = getLocalBounds().withTrimmedBottom(valueArea().getHeight() + 4).toFloat();
-        const auto size = std::min(dial.getWidth(), dial.getHeight()) - 8.0f;
+        const auto dial = compact ? getLocalBounds().removeFromLeft(getHeight()).toFloat()
+                                  : getLocalBounds().withTrimmedBottom(valueArea().getHeight() + 4).toFloat();
+        const auto size = std::min(dial.getWidth(), dial.getHeight()) - (compact ? 2.0f : 8.0f);
         const auto centre = dial.getCentre();
         const auto radius = size * 0.5f;
         constexpr auto start = juce::MathConstants<float>::pi * 1.25f, end = juce::MathConstants<float>::pi * 2.75f;
@@ -79,11 +89,17 @@ public:
         g.setColour(colours::text);
         g.drawLine(juce::Line<float>(centre.getPointOnCircumference(body * 0.25f, angle), centre.getPointOnCircumference(body * 0.88f, angle)),
                    std::max(2.0f, body * 0.07f));
+        if (marker >= 0.0f)
+        {
+            const auto spot = centre.getPointOnCircumference(radius - track, start + juce::jlimit(0.0f, 1.0f, marker) * (end - start));
+            g.setColour(colours::text);
+            g.fillEllipse(juce::Rectangle<float>(track * 1.8f, track * 1.8f).withCentre(spot));
+        }
         if (!entry.isVisible())
         {
             g.setColour(colours::text);
-            g.setFont(valueFont(std::min(17.0f, valueArea().getHeight() * 0.8f)));
-            g.drawText(getTextFromValue(getValue()), valueArea(), juce::Justification::centred, false);
+            g.setFont(valueFont(compact ? std::min(16.0f, getHeight() * 0.55f) : std::min(17.0f, valueArea().getHeight() * 0.8f)));
+            g.drawText(getTextFromValue(getValue()), valueArea(), compact ? juce::Justification::centredLeft : juce::Justification::centred, false);
         }
         drawFocus(g, *this, 8.0f);
     }
@@ -151,12 +167,16 @@ public:
         return value;
     }
 private:
-    juce::Rectangle<int> valueArea() const { return getLocalBounds().removeFromBottom(std::max(18, getHeight() / 7)); }
+    juce::Rectangle<int> valueArea() const
+    {
+        return compact ? getLocalBounds().withTrimmedLeft(getHeight() + 4) : getLocalBounds().removeFromBottom(std::max(18, getHeight() / 7));
+    }
     void clearEntryError()
     {
         if (normalTooltip.isNotEmpty()) { setTooltip(normalTooltip); normalTooltip.clear(); }
     }
     juce::TextEditor entry;
     juce::String normalTooltip;
-    bool editing = false, typedClick = false;
+    bool editing = false, typedClick = false, compact = false;
+    float marker = -1.0f;
 };

@@ -1,11 +1,13 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "InstrumentPage.h"
+#include "PerformanceStrip.h"
 
 class DropforgeProcessor;
 
 // The synth suite (SPEC section 6): header, page navigation, the selected
-// instrument page and a footer help line. Everything lives on a fixed
+// instrument page and a footer with the performance strip, the routing
+// keyboard and the help line. Everything lives on a fixed
 // 1100 x 700 design canvas that is scaled as a whole (75-200 %, fixed aspect).
 class DropforgeEditor final : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -25,6 +27,7 @@ public:
     juce::Button& panicButton() noexcept { return panic; }
     juce::Label& helpLine() noexcept { return hoverHelp; }
     dropforge::ui::RoutingKeyboard& routingKeyboard() noexcept { return keyboard; }
+    dropforge::ui::PerformanceStrip& performanceStrip() noexcept { return strip; }
     static constexpr int pageCount = 3; // Anvil, Furnace, Blade: signal order
 
 private:
@@ -46,6 +49,7 @@ private:
     NumericKnob output;
     dropforge::ui::OutputMeter meter;
     dropforge::ui::RoutingKeyboard keyboard;
+    dropforge::ui::PerformanceStrip strip;
     juce::TextButton mark{"DROPFORGE"}, panic{"Panic"}, about{"i"};
     std::array<std::unique_ptr<dropforge::ui::InstrumentTab>, pageCount> tabs;
     std::array<std::unique_ptr<dropforge::ui::InstrumentPage>, pageCount> pages;
