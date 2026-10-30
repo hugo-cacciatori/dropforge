@@ -8,11 +8,11 @@ Play chords with one hand and Dropforge turns them into a full part:
 |---|---|---|
 | **Anvil** | The lowest note you hold, one octave down (alone, it follows the newest note) | A clean, round sub-bass with a growl on top, perfectly centred |
 | **Furnace** | Every note you hold | The big, wide, aggressive chord wall: the part rhythm guitars play in a metal mix |
-| **Blade** *(coming)* | The highest note you hold | A cutting mono lead that doubles your top note |
+| **Blade** | The highest note you hold (alone, it follows the newest note) | A cutting mono lead that doubles your top note |
 
 The rhythm comes from your MIDI: notes hit instantly, hold while the key is down and stop dead when you let go, so chugs, stabs and chops are as tight as you play them. Velocity sets loudness. There are no envelopes to set up and nothing to configure before it sounds good.
 
-> **Status: early development, no release yet.** Anvil and Furnace now sound as intended, each with four modes (A–D), a Destruction switch, and Mono and Drop for Furnace, and each has its own page in the plugin window: click a tab to open its page, right-click it to switch that instrument on or off. Still to come before the first release: the Blade lead with performance controls (Impact, Glide, mod-wheel Roar and Vibrato), the effects page, and Motion (tempo-synced movement). Presets follow after. Releases will appear on the [Releases page](https://github.com/hugo-cacciatori/dropforge/releases).
+> **Status: early development, no release yet.** Anvil, Furnace and Blade now sound as intended, each with four modes (A–D) and a Destruction switch; Furnace adds Mono and Drop, Blade adds Portamento and Octave. Each has its own page in the plugin window: click a tab to open its page, right-click it to switch that instrument on or off. The strip along the bottom holds the performance controls: Impact (harder hits crack harder), Glide (chords slide into each other), pitch-bend range, and the mod wheel as **Roar** (a growl you play like a wah: rock the wheel for wubs) or **Vibrato**. Still to come before the first release: the effects page and Motion (tempo-synced movement). Presets follow after. Releases will appear on the [Releases page](https://github.com/hugo-cacciatori/dropforge/releases).
 
 ## What you need
 
@@ -37,7 +37,7 @@ The binaries are not code-signed, so Windows SmartScreen may warn the first time
 1. Open your music program and let it scan for new VST3 plugins (most rescan on start; otherwise look for a plugin rescan option in its settings).
 2. Create an instrument track and load **Dropforge** on it.
 3. Arm the track with your MIDI keyboard as input and enable monitoring, or draw MIDI notes on the track. With the Standalone app, just pick your MIDI keyboard and audio output in its settings.
-4. Play: low power chords for breakdowns, wider chords for drops. Turn layers on or off with their power switches and set their levels; **Output** sets the overall volume.
+4. Play: low power chords for breakdowns, wider chords for drops. Turn layers on or off with their power switches and set their levels; **Output** sets the overall volume. Move your keyboard's mod wheel for Roar growls, or switch the wheel to Vibrato in the bottom strip.
 
 ## Build from source
 
