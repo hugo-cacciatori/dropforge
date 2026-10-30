@@ -40,10 +40,10 @@ public:
         return {meterPeakLeft.exchange(0.0f, std::memory_order_relaxed), meterPeakRight.exchange(0.0f, std::memory_order_relaxed),
                 meterGlueDb.exchange(0.0f, std::memory_order_relaxed), meterLimiterDb.exchange(0.0f, std::memory_order_relaxed)};
     }
-    // Which layer page the editor shows. A per-session view preference only:
-    // it is not saved and never changes the sound.
-    bool isRhythmPageSelected() const noexcept { return rhythmPageSelected.load(std::memory_order_relaxed); }
-    void selectRhythmPage(bool selected) noexcept { rhythmPageSelected.store(selected, std::memory_order_relaxed); }
+    // Which suite page the editor shows (0 Anvil, 1 Furnace, in signal order).
+    // A per-session view preference only: it is not saved and never changes the sound.
+    int currentPage() const noexcept { return page.load(std::memory_order_relaxed); }
+    void showPage(int index) noexcept { page.store(index, std::memory_order_relaxed); }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameters();
@@ -67,6 +67,6 @@ private:
     std::atomic<bool> panicRequested{false};
     std::atomic<float> meterPeakLeft{0.0f}, meterPeakRight{0.0f}, meterGlueDb{0.0f}, meterLimiterDb{0.0f};
     void publishMeters() noexcept;
-    std::atomic<bool> rhythmPageSelected{false};
+    std::atomic<int> page{0};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DropforgeProcessor)
 };

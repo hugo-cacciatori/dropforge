@@ -77,7 +77,10 @@ target_sources(Dropforge PRIVATE
     src/plugin/Parameters.h
     src/ui/PluginEditor.cpp
     src/ui/PluginEditor.h
-    src/ui/LayerTab.h)
+    src/ui/Theme.h
+    src/ui/NumericKnob.h
+    src/ui/SuiteControls.h
+    src/ui/InstrumentPage.h)
 target_compile_definitions(Dropforge PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0

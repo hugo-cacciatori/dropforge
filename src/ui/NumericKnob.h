@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "Theme.h"
 #include <cmath>
 #include <locale>
 #include <sstream>
@@ -22,11 +23,14 @@ public:
     std::function<void(bool)> onEntryGesture;
     void mouseDown(const juce::MouseEvent& event) override
     {
-        if (event.mods.isPopupMenu()) { openEntry(); return; }
+        // The value under the dial is the place to type (right-click works anywhere).
+        if (event.mods.isPopupMenu() || valueArea().contains(event.getPosition())) { openEntry(); typedClick = true; return; }
+        typedClick = false;
         juce::Slider::mouseDown(event);
     }
     void mouseUp(const juce::MouseEvent& event) override
     {
+        if (typedClick) { typedClick = false; return; }
         if (!event.mods.isPopupMenu()) juce::Slider::mouseUp(event);
     }
     void mouseDoubleClick(const juce::MouseEvent& event) override
@@ -43,13 +47,54 @@ public:
     void resized() override
     {
         juce::Slider::resized();
-        entry.setBounds(getLocalBounds().withSizeKeepingCentre(132, 28).translated(0, getHeight() / 3));
+        entry.setBounds(valueArea().withSizeKeepingCentre(std::min(getWidth(), 132), valueArea().getHeight()));
+    }
+    void paint(juce::Graphics& g) override
+    {
+        using namespace dropforge::ui;
+        const auto accent = findColour(juce::Slider::rotarySliderFillColourId);
+        const auto dial = getLocalBounds().withTrimmedBottom(valueArea().getHeight() + 4).toFloat();
+        const auto size = std::min(dial.getWidth(), dial.getHeight()) - 8.0f;
+        const auto centre = dial.getCentre();
+        const auto radius = size * 0.5f;
+        constexpr auto start = juce::MathConstants<float>::pi * 1.25f, end = juce::MathConstants<float>::pi * 2.75f;
+        const auto position = static_cast<float>(valueToProportionOfLength(getValue()));
+        const auto angle = start + position * (end - start);
+        const auto track = std::max(3.0f, radius * 0.11f);
+        juce::Path arc;
+        arc.addCentredArc(centre.x, centre.y, radius - track, radius - track, 0.0f, start, end, true);
+        g.setColour(colours::base);
+        g.strokePath(arc, juce::PathStrokeType(track, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        juce::Path value;
+        value.addCentredArc(centre.x, centre.y, radius - track, radius - track, 0.0f, start, angle, true);
+        g.setColour(accent);
+        g.strokePath(value, juce::PathStrokeType(track, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        // The knob body: brushed steel with a pointer line.
+        const auto body = radius - track * 2.4f;
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff454b54), centre.x, centre.y - body,
+                                               juce::Colour(0xff1b1e22), centre.x, centre.y + body, false));
+        g.fillEllipse(juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(centre));
+        g.setColour(colours::edge.brighter(0.2f));
+        g.drawEllipse(juce::Rectangle<float>(body * 2.0f, body * 2.0f).withCentre(centre), 1.0f);
+        g.setColour(colours::text);
+        g.drawLine(juce::Line<float>(centre.getPointOnCircumference(body * 0.25f, angle), centre.getPointOnCircumference(body * 0.88f, angle)),
+                   std::max(2.0f, body * 0.07f));
+        if (!entry.isVisible())
+        {
+            g.setColour(colours::text);
+            g.setFont(valueFont(std::min(17.0f, valueArea().getHeight() * 0.8f)));
+            g.drawText(getTextFromValue(getValue()), valueArea(), juce::Justification::centred, false);
+        }
+        drawFocus(g, *this, 8.0f);
     }
     void openEntry()
     {
         entry.setTitle(getTitle() + " value");
         entry.setHelpText("Enter applies; Escape cancels; clicking away applies and closes.");
-        entry.setText(getTextFromValue(getValue()), false);
+        // Full precision while typing, so confirming unchanged text never nudges the value.
+        const auto exact = getMinimum() == -60.0 && getValue() <= -60.0 ? juce::String("-inf dB")
+                         : juce::String(getValue(), 3) + getTextValueSuffix();
+        entry.setText(exact, false);
         editing = true;
         entry.setVisible(true);
         entry.toFront(true);
@@ -71,6 +116,7 @@ public:
             }
         }
         entry.setVisible(false);
+        repaint();
     }
     void commitIfOutside(juce::Component* target)
     {
@@ -105,11 +151,12 @@ public:
         return value;
     }
 private:
+    juce::Rectangle<int> valueArea() const { return getLocalBounds().removeFromBottom(std::max(18, getHeight() / 7)); }
     void clearEntryError()
     {
         if (normalTooltip.isNotEmpty()) { setTooltip(normalTooltip); normalTooltip.clear(); }
     }
     juce::TextEditor entry;
     juce::String normalTooltip;
-    bool editing = false;
+    bool editing = false, typedClick = false;
 };

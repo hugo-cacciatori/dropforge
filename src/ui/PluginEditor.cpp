@@ -1,172 +1,251 @@
 #include "PluginEditor.h"
 #include "plugin/PluginProcessor.h"
 
+namespace
+{
+using namespace dropforge::ui;
+namespace ids = dropforge::parameters;
+
+// Header buttons drawn in the suite's own style instead of the stock look.
+struct SuiteLookAndFeel final : juce::LookAndFeel_V4
+{
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button, const juce::Colour&, bool highlighted, bool down) override
+    {
+        if (button.getProperties()["mark"]) return;
+        const auto bounds = button.getLocalBounds().toFloat().reduced(1.0f);
+        g.setGradientFill(juce::ColourGradient(colours::raised.brighter(highlighted ? 0.12f : 0.0f), 0.0f, bounds.getY(),
+                                               colours::panel.darker(down ? 0.35f : 0.1f), 0.0f, bounds.getBottom(), false));
+        g.fillRoundedRectangle(bounds, 7.0f);
+        g.setColour(colours::edge);
+        g.drawRoundedRectangle(bounds, 7.0f, 1.0f);
+        drawFocus(g, button, 7.0f);
+    }
+    void drawButtonText(juce::Graphics& g, juce::TextButton& button, bool highlighted, bool) override
+    {
+        const auto isMark = static_cast<bool>(button.getProperties()["mark"]);
+        g.setFont(isMark ? titleFont(34.0f) : titleFont(18.0f));
+        g.setColour(isMark ? (highlighted ? colours::text : colours::text.withAlpha(0.9f)) : colours::text);
+        const auto text = button.getButtonText();
+        g.drawText(text.length() > 1 ? text.toUpperCase() : text, button.getLocalBounds(),
+                   isMark ? juce::Justification::centredLeft : juce::Justification::centred, false);
+    }
+};
+
+SuiteLookAndFeel& suiteLook()
+{
+    static SuiteLookAndFeel look;
+    return look;
+}
+
+const juce::Rectangle<int> headerArea{0, 0, designWidth, 84};
+const juce::Rectangle<int> pageArea{24, 148, designWidth - 48, 492};
+const juce::Rectangle<int> footerArea{0, 652, designWidth, designHeight - 652};
+}
+
 DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
     : AudioProcessorEditor(processor), owner(processor),
-      anvilAttachment(processor.parameterState(), dropforge::parameters::bassLevel, anvilLevel),
-      furnaceAttachment(processor.parameterState(), dropforge::parameters::rhythmLevel, furnaceLevel),
-      outputAttachment(processor.parameterState(), dropforge::parameters::output, output)
+      outputAttachment(processor.parameterState(), ids::output, output)
 {
-    title.setText(JucePlugin_Name, juce::dontSendNotification);
-    title.setFont(juce::FontOptions(28.0f));
-    anvilTab.onClick = [this] { selectPage(false); };
-    furnaceTab.onClick = [this] { selectPage(true); };
-    anvilTab.onPowerToggle = [this] { toggleLayer(dropforge::parameters::bassEnabled); };
-    furnaceTab.onPowerToggle = [this] { toggleLayer(dropforge::parameters::rhythmEnabled); };
-    anvilTab.setTooltip("Anvil: select tab; right-click icon to enable or disable. Alt+Enter also toggles power.");
-    furnaceTab.setTooltip("Furnace: select tab; right-click icon to enable or disable. Alt+Enter also toggles power.");
-    for (auto* tab : {&anvilTab, &furnaceTab})
+    setLookAndFeel(&suiteLook());
+    auto& state = processor.parameterState();
+    pages[0] = std::make_unique<InstrumentPage>(state, PageSpec{anvilStyle, ids::bassEnabled, ids::bassMode, ids::bassLevel, ids::bassDestroy, {}});
+    pages[1] = std::make_unique<InstrumentPage>(state, PageSpec{furnaceStyle, ids::rhythmEnabled, ids::rhythmMode, ids::rhythmLevel, ids::rhythmDestroy,
+        {{ids::rhythmMono, "Mono", "folds the wall to the centre, for a tight, focused chord without phasing."},
+         {ids::rhythmDrop, "Drop", "plays the wall an octave down, in unison with Anvil, for the heaviest drops."}}});
+    for (int page = 0; page < pageCount; ++page)
     {
-        tab->setRadioGroupId(1);
-        tab->setClickingTogglesState(true);
+        auto& tab = *(tabs[(size_t) page] = std::make_unique<InstrumentTab>(page == 0 ? anvilStyle : furnaceStyle));
+        const juce::String title = tab.getButtonText();
+        tab.setTooltip(title + ": click to open its page; right-click (or Alt+Enter) switches " + title + " on or off. Ctrl+"
+                       + juce::String(page + 1) + " opens it from anywhere.");
+        tab.setHelpText(tab.getTooltip());
+        tab.setRadioGroupId(1);
+        tab.onClick = [this, page] { selectPage(page); };
+        tab.onPowerToggle = [this, page] { togglePower(page); };
+        tab.setExplicitFocusOrder(1 + page);
+        canvas.addAndMakeVisible(tab);
+        canvas.addChildComponent(*pages[(size_t) page]);
+        pages[(size_t) page]->setExplicitFocusOrder(10);
     }
-    levelLabel.setText("Level", juce::dontSendNotification);
-    outputLabel.setText("Output", juce::dontSendNotification);
-    for (auto* label : {&levelLabel, &outputLabel})
-    {
-        label->setJustificationType(juce::Justification::centred);
-        label->setFont(juce::FontOptions(15.0f));
-    }
-    hoverHelp.setTitle("Control description");
-    hoverHelp.setFont(juce::FontOptions(12.0f));
-    hoverHelp.setJustificationType(juce::Justification::centredLeft);
-    hoverHelp.setMinimumHorizontalScale(1.0f);
-    anvilLevel.setTitle("Anvil level");
-    furnaceLevel.setTitle("Furnace level");
-    output.setTitle("Output gain");
-    anvilLevel.setTooltip("Anvil level. Double-click resets; right-click types dB. -60 dB silences this layer.");
-    furnaceLevel.setTooltip("Furnace level. Double-click resets; right-click types dB. -60 dB silences this layer.");
-    output.setTooltip("Master output level. Double-click resets to 0 dB; right-click types an exact value.");
-    outputLabel.setTooltip(output.getTooltip());
-    const std::array<const char*, 3> ids{dropforge::parameters::bassLevel, dropforge::parameters::rhythmLevel,
-                                      dropforge::parameters::output};
-    const std::array<NumericKnob*, 3> knobs{&anvilLevel, &furnaceLevel, &output};
-    for (std::size_t i = 0; i < knobs.size(); ++i)
-    {
-        auto& knob = *knobs[i];
-        knob.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        knob.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-        knob.setNumDecimalPlacesToDisplay(3);
-        knob.setTextValueSuffix(" dB");
-        knob.setDoubleClickReturnValue(true, 0.0);
-        knob.setPopupDisplayEnabled(false, false, nullptr);
-        knob.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xffe9a153));
-        knob.setHelpText(knob.getTooltip());
-        knob.setWantsKeyboardFocus(true);
-        auto* parameter = processor.parameterState().getParameter(ids[i]);
-        knob.onEntryGesture = [parameter](bool begin)
-        {
-            if (begin) parameter->beginChangeGesture(); else parameter->endChangeGesture();
-        };
-    }
-    panic.setTooltip("Stop all sounding notes.");
+
+    mark.getProperties().set("mark", true);
+    mark.setTooltip("About Dropforge: version, credits and licence.");
+    about.setTooltip(mark.getTooltip());
+    panic.setTooltip("Panic: stops every sounding note at once.");
     panic.onClick = [&processor] { processor.requestPanic(); };
-    help.setTooltip("About Dropforge.");
-    help.onClick = [this] { showAbout(); };
-    for (auto* child : std::array<juce::Component*, 11>{&title, &levelLabel, &outputLabel, &hoverHelp,
-            &anvilLevel, &furnaceLevel, &output, &anvilTab, &furnaceTab, &panic, &help})
-        addAndMakeVisible(child);
-    for (auto* button : std::array<juce::Button*, 4>{&anvilTab, &furnaceTab, &panic, &help})
+    for (auto* button : {&mark, &about}) button->onClick = [this] { showAbout(); };
+    for (auto* button : {&mark, &panic, &about})
     {
         button->setWantsKeyboardFocus(true);
-        button->setTitle(button->getButtonText());
+        button->setTitle(button == &about ? juce::String("About") : button->getButtonText());
         button->setHelpText(button->getTooltip());
     }
-    anvilTab.setExplicitFocusOrder(1); furnaceTab.setExplicitFocusOrder(2);
-    anvilLevel.setExplicitFocusOrder(3); furnaceLevel.setExplicitFocusOrder(3);
-    output.setExplicitFocusOrder(4); panic.setExplicitFocusOrder(5); help.setExplicitFocusOrder(6);
+    mark.setExplicitFocusOrder(20); panic.setExplicitFocusOrder(21); output.setExplicitFocusOrder(22); about.setExplicitFocusOrder(23);
+
+    outputLabel.setText("OUTPUT", juce::dontSendNotification);
+    outputLabel.setFont(titleFont(16.0f));
+    outputLabel.setColour(juce::Label::textColourId, colours::dimText);
+    outputLabel.setJustificationType(juce::Justification::centredRight);
+    outputLabel.setInterceptsMouseClicks(false, false);
+    output.setTitle("Output gain");
+    output.setTooltip("Output: master level after the safety limiter. Double-click resets to 0 dB; click the value to type.");
+    output.setHelpText(output.getTooltip());
+    output.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    output.setNumDecimalPlacesToDisplay(1);
+    output.setTextValueSuffix(" dB");
+    output.setDoubleClickReturnValue(true, 0.0);
+    output.setPopupDisplayEnabled(false, false, nullptr);
+    output.setWantsKeyboardFocus(true);
+    output.setColour(juce::Slider::rotarySliderFillColourId, colours::text.withAlpha(0.8f));
+    auto* outputParameter = state.getParameter(ids::output);
+    output.onEntryGesture = [outputParameter](bool begin) { if (begin) outputParameter->beginChangeGesture(); else outputParameter->endChangeGesture(); };
+
+    hoverHelp.setTitle("Control description");
+    hoverHelp.setFont(valueFont(14.0f));
+    hoverHelp.setColour(juce::Label::textColourId, colours::dimText);
+    hoverHelp.setJustificationType(juce::Justification::centredLeft);
+    hoverHelp.setMinimumHorizontalScale(1.0f);
+    for (auto* child : std::initializer_list<juce::Component*>{&mark, &panic, &outputLabel, &output, &meter, &about, &hoverHelp})
+        canvas.addAndMakeVisible(child);
+    addAndMakeVisible(canvas);
+    layoutCanvas();
+
     addMouseListener(this, true);
     setWantsKeyboardFocus(true);
     setResizable(true, true);
-    setResizeLimits(560, 360, 1000, 600);
-    setSize(680, 400);
+    setResizeLimits(designWidth * 3 / 4, designHeight * 3 / 4, designWidth * 2, designHeight * 2);
+    getConstrainer()->setFixedAspectRatio(static_cast<double>(designWidth) / designHeight);
+    setSize(designWidth, designHeight);
     timerCallback();
     startTimerHz(30);
 }
 
-DropforgeEditor::~DropforgeEditor() { removeMouseListener(this); }
+DropforgeEditor::~DropforgeEditor()
+{
+    removeMouseListener(this);
+    setLookAndFeel(nullptr);
+}
 
 void DropforgeEditor::mouseDown(const juce::MouseEvent& event)
 {
-    for (auto* knob : {&anvilLevel, &furnaceLevel, &output}) knob->commitIfOutside(event.eventComponent);
+    output.commitIfOutside(event.eventComponent);
+    for (auto& page : pages) page->levelKnob().commitIfOutside(event.eventComponent);
+}
+
+bool DropforgeEditor::keyPressed(const juce::KeyPress& key)
+{
+    // Ctrl+1... opens the pages in signal order.
+    if (key.getModifiers().isCtrlDown())
+        for (int page = 0; page < pageCount; ++page)
+            if (key.getKeyCode() == '1' + page) { selectPage(page); return true; }
+    return false;
 }
 
 void DropforgeEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff17191d));
-    g.setColour(juce::Colour(0xff292d33));
-    g.fillRoundedRectangle(24.0f, 132.0f, getWidth() - 48.0f, getHeight() - 174.0f, 8.0f);
-    // Connect the selected tab to the page rather than drawing separate buttons.
-    g.fillRect(24, 132, getWidth() - 48, 12);
-    g.setColour(juce::Colour(0xff101216));
-    g.fillRect(0, getHeight() - 30, getWidth(), 30);
-    g.setColour(juce::Colour(0xff353a42));
-    g.drawHorizontalLine(getHeight() - 30, 0.0f, static_cast<float>(getWidth()));
+    // Only visible outside the canvas when a host forces another aspect ratio.
+    g.fillAll(colours::base);
+}
+
+void DropforgeEditor::paintCanvas(juce::Graphics& g)
+{
+    g.fillAll(colours::base);
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xff22252b), 0.0f, 0.0f, colours::base, 0.0f, static_cast<float>(headerArea.getBottom()), false));
+    g.fillRect(headerArea);
+    g.setColour(colours::edge.withAlpha(0.6f));
+    g.drawHorizontalLine(headerArea.getBottom(), 0.0f, static_cast<float>(designWidth));
+    // A thin rule in every instrument's identity colour under the product mark.
+    const std::array<juce::Colour, 2> identities{anvilStyle.identity, furnaceStyle.identity};
+    for (size_t i = 0; i < identities.size(); ++i)
+    {
+        g.setColour(identities[i]);
+        g.fillRect(24 + static_cast<int>(i) * 34, 60, 30, 3);
+    }
+    g.setColour(colours::faint);
+    g.setFont(valueFont(12.0f));
+    g.drawText("HEAVY SYNTH SUITE", juce::Rectangle<int>(100, 52, 160, 18), juce::Justification::centredLeft, false);
+    g.setColour(juce::Colour(0xff0f1113));
+    g.fillRect(footerArea);
+    g.setColour(colours::edge.withAlpha(0.6f));
+    g.drawHorizontalLine(footerArea.getY(), 0.0f, static_cast<float>(designWidth));
+}
+
+void DropforgeEditor::layoutCanvas()
+{
+    canvas.setBounds(0, 0, designWidth, designHeight);
+    mark.setBounds(20, 10, 230, 46);
+    panic.setBounds(600, 24, 96, 36);
+    outputLabel.setBounds(704, 30, 66, 24);
+    output.setBounds(776, 4, 80, 76);
+    meter.setBounds(870, 24, 166, 36);
+    about.setBounds(1046, 26, 32, 32);
+    for (int page = 0; page < pageCount; ++page)
+    {
+        tabs[(size_t) page]->setBounds(pageArea.getX() + page * 240, 94, 232, 56);
+        pages[(size_t) page]->setBounds(pageArea);
+    }
+    hoverHelp.setBounds(footerArea.reduced(24, 10));
 }
 
 void DropforgeEditor::resized()
 {
-    const auto width = getWidth();
-    title.setBounds(24, 20, width - 140, 40);
-    help.setBounds(width - 84, 25, 60, 30);
-    const auto tabWidth = (width - 48) / 2;
-    anvilTab.setBounds(24, 88, tabWidth, 46);
-    furnaceTab.setBounds(24 + tabWidth, 88, width - 48 - tabWidth, 46);
-    const auto leftCentre = width / 4 + 12, rightCentre = width * 3 / 4 - 12;
-    levelLabel.setBounds(leftCentre - 90, 153, 180, 26);
-    outputLabel.setBounds(rightCentre - 90, 153, 180, 26);
-    const auto knobHeight = getHeight() - 266;
-    anvilLevel.setBounds(leftCentre - 84, 180, 168, knobHeight);
-    furnaceLevel.setBounds(anvilLevel.getBounds());
-    output.setBounds(rightCentre - 84, 180, 168, knobHeight);
-    panic.setBounds(width - 128, getHeight() - 78, 88, 28);
-    hoverHelp.setBounds(16, getHeight() - 28, width - 32, 26);
+    // Scale the whole canvas: vector drawing stays crisp at every size, and a
+    // host that ignores the aspect ratio gets the canvas centred, never cropped.
+    const auto scale = std::min(getWidth() / static_cast<float>(designWidth), getHeight() / static_cast<float>(designHeight));
+    const auto x = (getWidth() - designWidth * scale) * 0.5f, y = (getHeight() - designHeight * scale) * 0.5f;
+    canvas.setTransform(juce::AffineTransform::scale(scale).translated(x, y));
 }
 
-void DropforgeEditor::toggleLayer(const char* id)
+void DropforgeEditor::togglePower(int page)
 {
-    auto* parameter = owner.parameterState().getParameter(id);
+    auto* parameter = owner.parameterState().getParameter(page == 0 ? ids::bassEnabled : ids::rhythmEnabled);
     parameter->beginChangeGesture();
     parameter->setValueNotifyingHost(parameter->getValue() >= 0.5f ? 0.0f : 1.0f);
     parameter->endChangeGesture();
     timerCallback();
 }
 
-void DropforgeEditor::selectPage(bool furnace)
+void DropforgeEditor::selectPage(int page)
 {
-    if (furnace != owner.isRhythmPageSelected())
-    {
-        anvilLevel.finishEntry(true);
-        furnaceLevel.finishEntry(true);
-    }
-    owner.selectRhythmPage(furnace);
+    if (page != owner.currentPage()) pages[(size_t) owner.currentPage()]->levelKnob().finishEntry(true);
+    owner.showPage(page);
     timerCallback();
 }
 
 void DropforgeEditor::timerCallback()
 {
-    const auto furnace = owner.isRhythmPageSelected();
-    anvilTab.setToggleState(!furnace, juce::dontSendNotification);
-    furnaceTab.setToggleState(furnace, juce::dontSendNotification);
-    anvilTab.setLayerEnabled(owner.parameterState().getRawParameterValue(dropforge::parameters::bassEnabled)->load() >= 0.5f);
-    furnaceTab.setLayerEnabled(owner.parameterState().getRawParameterValue(dropforge::parameters::rhythmEnabled)->load() >= 0.5f);
-    for (auto* tab : {&anvilTab, &furnaceTab})
-        tab->setDescription(tab->getButtonText() + (tab->getToggleState() ? " page selected. " : " page. ")
-                            + (tab->isLayerEnabled() ? "Layer on." : "Layer off; still editable."));
-    if (anvilLevel.isVisible() == furnace) anvilLevel.finishEntry(true);
-    if (furnaceLevel.isVisible() != furnace) furnaceLevel.finishEntry(true);
-    anvilLevel.setVisible(!furnace); furnaceLevel.setVisible(furnace);
-    levelLabel.setTooltip(furnace ? furnaceLevel.getTooltip() : anvilLevel.getTooltip());
+    const auto meters = owner.takeMeters();
+    meter.push(meters.peakLeft, meters.peakRight, meters.limiterReductionDb);
+    const auto current = juce::jlimit(0, pageCount - 1, owner.currentPage());
+    auto& state = owner.parameterState();
+    for (int index = 0; index < pageCount; ++index)
+    {
+        auto& tab = *tabs[(size_t) index];
+        auto& page = *pages[(size_t) index];
+        const auto& spec = page.pageSpec();
+        const auto enabled = state.getRawParameterValue(spec.powerId)->load() >= 0.5f;
+        const auto mode = juce::jlimit(0, 3, juce::roundToInt(state.getRawParameterValue(spec.modeId)->load()));
+        tab.setStatus(enabled, mode, state.getRawParameterValue(spec.destroyId)->load() >= 0.5f);
+        tab.setToggleState(index == current, juce::dontSendNotification);
+        tab.setDescription(tab.getButtonText() + (index == current ? " page open. " : " page. ")
+                           + (enabled ? "On, mode " + juce::String(modeLetters[(size_t) mode]) + " " + modeNames[(size_t) mode] + "."
+                                      : juce::String("Off; still editable.")));
+        // Hidden pages neither repaint nor keep a typing field open.
+        if (index != current && page.isVisible()) page.levelKnob().finishEntry(true);
+        page.setVisible(index == current);
+        if (index == current) page.showMode(mode);
+    }
     const auto describe = [this](juce::Component* target) -> juce::String
     {
-        if (target == nullptr || (target != this && !isParentOf(target))) return {};
-        for (auto* component = target; component != nullptr && component != this; component = component->getParentComponent())
+        if (target == nullptr || !canvas.isParentOf(target)) return {};
+        for (auto* component = target; component != nullptr && component != &canvas; component = component->getParentComponent())
             if (auto* tooltip = dynamic_cast<juce::TooltipClient*>(component))
                 if (const auto text = tooltip->getTooltip(); text.isNotEmpty()) return text;
         return {};
     };
     auto description = describe(juce::Desktop::getInstance().getMainMouseSource().getComponentUnderMouse());
     if (description.isEmpty()) description = describe(juce::Component::getCurrentlyFocusedComponent());
+    if (description.isEmpty()) description = "Play chords: Anvil takes the lowest key an octave down, Furnace plays the wall. Hover any control for help.";
     hoverHelp.setText(description.replaceCharacter('\n', ' '), juce::dontSendNotification);
 }
 
@@ -174,6 +253,8 @@ void DropforgeEditor::showAbout()
 {
     aboutBox = juce::NativeMessageBox::showScopedAsync(
         juce::MessageBoxOptions{}.withTitle("About Dropforge")
-            .withMessage(juce::String(JucePlugin_Name) + " " + JucePlugin_VersionString + "\n\nHugo Cacciatori")
+            .withMessage(juce::String(JucePlugin_Name) + " " + JucePlugin_VersionString
+                         + "\nHeavy synth suite for breakdowns and drops.\n\nBy Hugo Cacciatori. Free to use for music; see the licence"
+                           " file that comes with it.\nBuilt with JUCE (juce.com), used under its licence.")
             .withButton("Close").withAssociatedComponent(this), {});
 }

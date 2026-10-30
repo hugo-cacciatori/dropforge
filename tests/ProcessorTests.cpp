@@ -1,12 +1,12 @@
 #include "plugin/PluginProcessor.h"
 #include "plugin/MidiInput.h"
-#include "ui/NumericKnob.h"
-#include "ui/LayerTab.h"
+#include "ui/PluginEditor.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <vector>
 #include <locale>
 #if JUCE_LINUX
 #include "X11TestDisplay.h"
@@ -62,13 +62,33 @@ void refreshUi()
     juce::Timer::callPendingTimersSynchronously();
 }
 
-void rightClickIcon(LayerTab& tab, int x = 18)
+void rightClick(juce::Component& target, juce::Point<float> at = {60.0f, 20.0f})
 {
-    const juce::MouseEvent event(juce::Desktop::getInstance().getMainMouseSource(),
-        {static_cast<float>(x), 20.0f}, juce::ModifierKeys(juce::ModifierKeys::rightButtonModifier),
-        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &tab, &tab, {}, {}, {}, 1, false);
-    tab.mouseDown(event);
-    tab.mouseUp(event);
+    const juce::MouseEvent event(juce::Desktop::getInstance().getMainMouseSource(), at,
+        juce::ModifierKeys(juce::ModifierKeys::rightButtonModifier), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        &target, &target, {}, at, {}, 1, false);
+    target.mouseDown(event);
+    target.mouseUp(event);
+}
+
+void leftClick(juce::Component& target, juce::Point<float> at)
+{
+    const juce::MouseEvent event(juce::Desktop::getInstance().getMainMouseSource(), at, {}, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        &target, &target, {}, at, {}, 1, false);
+    target.mouseDown(event);
+    target.mouseUp(event);
+}
+
+int choice(DropforgeProcessor& processor, const char* id)
+{
+    return juce::roundToInt(processor.parameterState().getRawParameterValue(id)->load());
+}
+
+// Every component inside a parent, depth first (only the visible ones if asked).
+void collect(juce::Component& parent, std::vector<juce::Component*>& out, bool visibleOnly = false)
+{
+    for (auto* child : parent.getChildren())
+        if (!visibleOnly || child->isVisible()) { out.push_back(child); collect(*child, out, visibleOnly); }
 }
 
 void stateTests()
@@ -84,8 +104,8 @@ void stateTests()
         }
     } changes;
     source.addListener(&changes);
-    source.selectRhythmPage(true);
-    source.selectRhythmPage(false);
+    source.showPage(1);
+    source.showPage(0);
     require(changes.nonParameterChanges == 0 && changes.parameterChanges == 0,
             "choosing an editor page is a view preference: no host change or automation");
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
@@ -101,7 +121,7 @@ void stateTests()
     for (const auto* retired : {"xover_hz", "destruction", "guitar_mono", "rhythm_mono", "output_db", "bass_enabled"})
         require(source.parameterState().getParameter(retired) == nullptr, "no Ironstack legacy parameter IDs");
     require(toggle(source, dropforge::parameters::bassEnabled) && toggle(source, dropforge::parameters::rhythmEnabled)
-            && !source.isRhythmPageSelected(), "both layers on and the Anvil page by default");
+            && source.currentPage() == 0, "both layers on and the Anvil page by default");
     require(outputDb(source) == 0.0f, "output defaults to unity");
     for (const float value : {-12.0f, -9.876543f, -6.0f, 0.0f, 1.234567f, 6.0f})
     {
@@ -120,13 +140,13 @@ void stateTests()
     {
         setToggle(source, dropforge::parameters::bassEnabled, (bits & 1) != 0);
         setToggle(source, dropforge::parameters::rhythmEnabled, (bits & 2) != 0);
-        source.selectRhythmPage((bits & 4) != 0);
-        destination.selectRhythmPage(false);
+        source.showPage((bits >> 2) & 1);
+        destination.showPage(0);
         juce::MemoryBlock saved, repeated;
         source.getStateInformation(saved);
         destination.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
         destination.getStateInformation(repeated);
-        require(!destination.isRhythmPageSelected(), "the editor page is not part of the saved sound");
+        require(destination.currentPage() == 0, "the editor page is not part of the saved sound");
         for (const auto* id : {dropforge::parameters::bassEnabled, dropforge::parameters::rhythmEnabled})
             require(toggle(source, id) == toggle(destination, id), "all boolean values restore exactly");
         for (const auto* id : {dropforge::parameters::output, dropforge::parameters::bassLevel, dropforge::parameters::rhythmLevel})
@@ -323,7 +343,7 @@ void routingBridgeTests()
                 reference.reset(0.0f);
             }
             if (index == 6) { processor.requestPanic(); reference.panic(); }
-            processor.selectRhythmPage(index % 2 != 0); // Page has no sound counterpart.
+            processor.showPage(index % 2); // Page has no sound counterpart.
             juce::AudioBuffer<float> host(2, count), expected(2, count);
             juce::MidiBuffer midi;
             if (index < 3 || index == 5)
@@ -377,73 +397,115 @@ void routingBridgeTests()
 
 void editorTests(const juce::String& snapshot)
 {
+    namespace ids = dropforge::parameters;
     DropforgeProcessor processor;
-    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
-    require(editor && editor->getWidth() == 680 && editor->getHeight() == 400, "compact resizable editor");
+    std::unique_ptr<juce::AudioProcessorEditor> created(processor.createEditor());
+    auto* editor = dynamic_cast<DropforgeEditor*>(created.get());
+    require(editor && editor->getWidth() == 1100 && editor->getHeight() == 700, "suite editor opens at 1100 x 700");
     // Offscreen: the editor never gets a desktop window, so tests cannot
     // appear on screen or steal focus. Snapshots are painted into images.
-    LayerTab *anvil = nullptr, *furnace = nullptr;
-    NumericKnob *output = nullptr, *anvilLevel = nullptr, *furnaceLevel = nullptr;
-    juce::TextButton* panic = nullptr;
-    juce::Label* footer = nullptr;
-    for (auto* child : editor->getChildren())
+    auto& anvil = editor->tab(0);
+    auto& furnace = editor->tab(1);
+    auto& anvilPage = editor->instrumentPage(0);
+    auto& furnacePage = editor->instrumentPage(1);
+    auto& output = editor->outputKnob();
+    auto& footer = editor->helpLine();
+    require(anvil.getButtonText() == "Anvil" && furnace.getButtonText() == "Furnace", "tabs in signal order");
+    std::vector<juce::Component*> everything;
+    collect(*editor, everything);
+    for (auto* component : everything)
     {
-        if (auto* tab = dynamic_cast<LayerTab*>(child))
-            (tab->getButtonText() == "Anvil" ? anvil : furnace) = tab;
-        if (auto* knob = dynamic_cast<NumericKnob*>(child))
-        {
-            if (knob->getTitle() == "Output gain") output = knob;
-            if (knob->getTitle() == "Anvil level") anvilLevel = knob;
-            if (knob->getTitle() == "Furnace level") furnaceLevel = knob;
-        }
-        if (auto* button = dynamic_cast<juce::TextButton*>(child))
-            if (button->getButtonText() == "Panic") panic = button;
-        if (auto* label = dynamic_cast<juce::Label*>(child))
-            if (label->getTitle() == "Control description") footer = label;
-        require(dynamic_cast<juce::ToggleButton*>(child) == nullptr, "no power checkboxes");
-        if (auto* button = dynamic_cast<juce::Button*>(child))
+        require(dynamic_cast<juce::ToggleButton*>(component) == nullptr, "no stock checkboxes");
+        if (auto* button = dynamic_cast<juce::Button*>(component))
         {
             // Offscreen there is no window, so build the handler directly (public on Component).
             const auto handler = static_cast<juce::Component*>(button)->createAccessibilityHandler();
-            require(button->getTooltip().isNotEmpty() && button->getWantsKeyboardFocus()
-                && handler && handler->getHelp().isNotEmpty(), "all buttons have accessible help and focus");
+            require(button->getTooltip().isNotEmpty() && button->getWantsKeyboardFocus() && button->getTitle().isNotEmpty()
+                && handler && handler->getHelp().isNotEmpty(), "all buttons have a name, help and keyboard focus");
         }
     }
-    require(anvil && furnace && output && anvilLevel && furnaceLevel && panic && footer, "named tabs, levels, output, panic and footer exist");
-    require(anvil->getToggleState() && anvilLevel->isVisible() && !furnaceLevel->isVisible(), "Anvil page selected initially");
-    const auto outputBounds = output->getBounds();
-    furnace->onClick();
-    require(processor.isRhythmPageSelected() && furnaceLevel->isVisible() && !anvilLevel->isVisible(), "Furnace page selects its level");
-    require(output->getBounds() == outputBounds && toggle(processor, dropforge::parameters::bassEnabled), "page selection preserves common controls and power");
-    rightClickIcon(*anvil, 70);
-    require(toggle(processor, dropforge::parameters::bassEnabled), "right-click label does not toggle power");
-    rightClickIcon(*anvil);
-    require(!toggle(processor, dropforge::parameters::bassEnabled) && processor.isRhythmPageSelected(), "right-click icon toggles power without selecting page");
-    require(!anvil->createAccessibilityHandler()->getCurrentState().isChecked(), "accessible power state updates immediately");
-    anvil->onClick();
-    require(anvilLevel->isVisible() && anvilLevel->isEnabled(), "disabled page remains editable");
-    require(anvil->createAccessibilityHandler()->getActions().invoke(juce::AccessibilityActionType::toggle), "accessible power toggle exists");
-    require(toggle(processor, dropforge::parameters::bassEnabled), "accessible toggle changes the same host parameter");
-    for (auto* knob : {anvilLevel, furnaceLevel, output})
+    require(anvil.getToggleState() && anvilPage.isVisible() && !furnacePage.isVisible(), "Anvil page open initially");
+    require(furnacePage.optionSwitch("Mono") && furnacePage.optionSwitch("Drop") && !anvilPage.optionSwitch("Mono"),
+            "Mono and Drop live only on the Furnace page");
+
+    // Navigation and power.
+    const auto outputBounds = output.getBounds();
+    furnace.onClick();
+    require(processor.currentPage() == 1 && furnacePage.isVisible() && !anvilPage.isVisible(), "Furnace tab opens its page");
+    require(output.getBounds() == outputBounds && toggle(processor, ids::bassEnabled), "page change keeps the header and power");
+    rightClick(anvil, {150.0f, 30.0f});
+    require(!toggle(processor, ids::bassEnabled) && processor.currentPage() == 1, "right-click anywhere on a tab toggles power without opening it");
+    refreshUi();
+    require(!anvil.isInstrumentEnabled() && !anvil.createAccessibilityHandler()->getCurrentState().isChecked(), "tab shows power off");
+    require(anvil.createAccessibilityHandler()->getActions().invoke(juce::AccessibilityActionType::toggle)
+            && toggle(processor, ids::bassEnabled), "accessible power toggle changes the same host parameter");
+    auto& furnacePower = furnacePage.powerSwitch();
+    require(furnacePower.getToggleState(), "page power switch shows the host state");
+    furnacePower.setToggleState(false, juce::sendNotificationSync);
+    require(!toggle(processor, ids::rhythmEnabled), "visible page power switch turns the instrument off");
+    rightClick(furnace);
+    require(toggle(processor, ids::rhythmEnabled) && furnacePower.getToggleState(), "tab and page power stay in step");
+    anvil.onClick();
+    require(anvilPage.isVisible() && anvilPage.levelKnob().isEnabled(), "a page stays editable while its instrument is off");
+
+    // Modes, Destruction and options.
+    for (int page = 0; page < 2; ++page)
     {
-        if (knob == furnaceLevel) furnace->onClick(); else anvil->onClick();
+        auto& instrument = editor->instrumentPage(page);
+        const auto* modeId = page == 0 ? ids::bassMode : ids::rhythmMode;
+        const auto* destroyId = page == 0 ? ids::bassDestroy : ids::rhythmDestroy;
+        auto& modes = instrument.modeSelector();
+        require(modes.selectedMode() == 0 && modes.button(0).getToggleState(), "mode A selected by default");
+        modes.button(2).onClick();
+        require(choice(processor, modeId) == 2 && modes.selectedMode() == 2 && modes.button(2).getToggleState()
+                && !modes.button(0).getToggleState(), "a mode button sets the mode parameter");
+        auto* parameter = processor.parameterState().getParameter(modeId);
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(3.0f));
+        require(modes.selectedMode() == 3 && modes.button(3).getToggleState(), "host automation moves the mode selector");
+        auto& destruction = instrument.destructionSwitch();
+        destruction.setToggleState(true, juce::sendNotificationSync);
+        require(toggle(processor, destroyId), "Destruction switch writes its parameter");
+        refreshUi();
+        require(editor->tab(page).getDescription().contains("D Alloy"), "the tab names its current mode");
+        destruction.setToggleState(false, juce::sendNotificationSync);
+        modes.button(0).onClick();
+        require(choice(processor, modeId) == 0 && !toggle(processor, destroyId), "mode and Destruction return to defaults");
+    }
+    for (const auto& [name, id] : {std::pair{"Mono", ids::rhythmMono}, std::pair{"Drop", ids::rhythmDrop}})
+    {
+        auto& option = *furnacePage.optionSwitch(name);
+        option.setToggleState(true, juce::sendNotificationSync);
+        require(toggle(processor, id), "Furnace option writes its parameter");
+        setToggle(processor, id, false);
+        require(!option.getToggleState(), "host changes reach the option switch");
+    }
+
+    // Knobs: reset, typed values and the value field.
+    auto& anvilLevel = anvilPage.levelKnob();
+    auto& furnaceLevel = furnacePage.levelKnob();
+    for (auto* knob : {&anvilLevel, &furnaceLevel, &output})
+    {
+        if (knob == &furnaceLevel) furnace.onClick(); else anvil.onClick();
         require(knob->getTextBoxPosition() == juce::Slider::NoTextBox && !knob->valueEditor().isVisible(), "no persistent numeric field");
         knob->setValue(-6.0, juce::sendNotificationSync);
         const juce::MouseEvent doubleClick(juce::Desktop::getInstance().getMainMouseSource(), {}, {},
             0, 0, 0, 0, 0, knob, knob, {}, {}, {}, 2, false);
         knob->mouseDoubleClick(doubleClick);
         require(knob->getValue() == 0.0 && !knob->valueEditor().isVisible(), "double-click resets default without opening entry");
-        const juce::MouseEvent rightClick(juce::Desktop::getInstance().getMainMouseSource(), {},
-            juce::ModifierKeys(juce::ModifierKeys::rightButtonModifier), 0, 0, 0, 0, 0, knob, knob, {}, {}, {}, 1, false);
-        knob->mouseDown(rightClick); knob->mouseUp(rightClick);
         auto& entry = knob->valueEditor();
+        leftClick(*knob, {knob->getWidth() * 0.5f, knob->getHeight() - 4.0f});
+        require(entry.isVisible(), "clicking the value opens the entry field");
+        entry.onEscapeKey();
+        rightClick(*knob, {});
         require(entry.isVisible(), "right-click opens the entry field");
         require(entry.getHighlightedRegion().getLength() == entry.getText().length(), "entry selects the full current value");
         entry.setText("-3.125 dB", false); entry.onReturnKey();
         require(std::abs(knob->getValue() + 3.125) < 1e-5 && !entry.isVisible(), "Enter commits decimal units and hides field");
+        knob->openEntry(); entry.onReturnKey();
+        require(std::abs(knob->getValue() + 3.125) < 1e-5, "confirming the shown text keeps the exact value");
         knob->openEntry(); entry.setText("-4.25", false); entry.onFocusLost();
         require(std::abs(knob->getValue() + 4.25) < 1e-5 && !entry.isVisible(), "focus loss commits and hides field");
-        knob->openEntry(); entry.setText("-5.5", false); knob->commitIfOutside(panic);
+        knob->openEntry(); entry.setText("-5.5", false); knob->commitIfOutside(&editor->panicButton());
         require(std::abs(knob->getValue() + 5.5) < 1e-5 && !entry.isVisible(), "click-away commits even on a non-focus-taking control");
         knob->openEntry(); entry.setText("-10", false); entry.onEscapeKey();
         require(std::abs(knob->getValue() + 5.5) < 1e-5, "Escape cancels");
@@ -452,77 +514,135 @@ void editorTests(const juce::String& snapshot)
             knob->openEntry(); entry.setText(invalid, false); entry.onReturnKey();
             require(std::abs(knob->getValue() + 5.5) < 1e-5 && !entry.isVisible(), "invalid values preserve setting and close field");
         }
+        require(knob->getTooltip().contains("Enter a number from"), "the help line states the range after invalid input");
         knob->setValue(0.0, juce::sendNotificationSync);
     }
-    output->setValue(-9.0, juce::sendNotificationSync);
+    anvilLevel.openEntry();
+    furnace.onClick();
+    require(!anvilLevel.valueEditor().isVisible(), "changing page closes a typing field");
+    output.setValue(-9.0, juce::sendNotificationSync);
     require(outputDb(processor) == -9.0f, "output writes through APVTS");
     setOutput(processor, 3.0f);
-    require(std::abs(output->getValue() - 3.0) < 1e-5, "host updates output knob");
-    anvilLevel->setValue(-4.0, juce::sendNotificationSync);
-    furnaceLevel->setValue(-7.0, juce::sendNotificationSync);
-    rightClickIcon(*furnace);
-    furnace->onClick();
+    require(std::abs(output.getValue() - 3.0) < 1e-5, "host updates output knob");
+
+    // Recall: the sound comes back, the page does not.
+    anvilLevel.setValue(-4.0, juce::sendNotificationSync);
+    furnaceLevel.setValue(-7.0, juce::sendNotificationSync);
+    furnacePage.modeSelector().button(1).onClick();
+    rightClick(furnace);
+    furnace.onClick();
     juce::MemoryBlock settings;
     processor.getStateInformation(settings);
     DropforgeProcessor recalled;
     recalled.setStateInformation(settings.getData(), static_cast<int>(settings.getSize()));
-    require(!recalled.isRhythmPageSelected() && !toggle(recalled, dropforge::parameters::rhythmEnabled)
-        && recalled.parameterState().getRawParameterValue(dropforge::parameters::bassLevel)->load() == -4.0f
-        && recalled.parameterState().getRawParameterValue(dropforge::parameters::rhythmLevel)->load() == -7.0f,
-        "power and levels restore; the page is a view preference only");
-    for (const auto size : {juce::Point<int>{560, 360}, juce::Point<int>{1000, 600}, juce::Point<int>{680, 400}})
+    require(recalled.currentPage() == 0 && !toggle(recalled, ids::rhythmEnabled) && choice(recalled, ids::rhythmMode) == 1
+        && recalled.parameterState().getRawParameterValue(ids::bassLevel)->load() == -4.0f
+        && recalled.parameterState().getRawParameterValue(ids::rhythmLevel)->load() == -7.0f,
+        "power, modes and levels restore; the page is a view preference only");
+    furnacePage.modeSelector().button(0).onClick();
+    setToggle(processor, ids::rhythmEnabled, true);
+
+    // Layout: the canvas fills the window at 75-200 % and every part stays inside its parent.
+    auto& canvas = editor->canvasComponent();
+    for (const auto size : {juce::Point<int>{825, 525}, juce::Point<int>{2200, 1400}, juce::Point<int>{1300, 700}, juce::Point<int>{1100, 700}})
     {
         editor->setSize(size.x, size.y);
-        for (auto* child : editor->getChildren()) require(editor->getLocalBounds().contains(child->getBounds()), "all resized controls fit");
-        const auto common = output->getBounds();
-        anvil->onClick(); furnace->onClick();
-        require(output->getBounds() == common && footer->getHeight() == 26, "stable output and one-line footer geometry");
+        const auto shown = editor->getLocalArea(&canvas, canvas.getLocalBounds());
+        require(editor->getLocalBounds().expanded(1).contains(shown)
+                && (std::abs(shown.getWidth() - size.x) <= 1 || std::abs(shown.getHeight() - size.y) <= 1),
+                "the scaled canvas fills the window without cropping");
+        for (int page = 0; page < 2; ++page)
+        {
+            editor->tab(page).onClick();
+            std::vector<juce::Component*> parts;
+            collect(canvas, parts, true);
+            for (auto* part : parts)
+            {
+                const auto fits = part->getParentComponent()->getLocalBounds().contains(part->getBounds());
+                if (!fits) std::cerr << "outside its parent: " << part->getTitle() << ' ' << part->getBounds().toString() << '\n';
+                require(fits, "every control fits inside its parent");
+            }
+            require(output.getBounds() == outputBounds && footer.getHeight() <= 32, "stable header and one-line footer");
+        }
     }
+    require(editor->getConstrainer()->getFixedAspectRatio() > 1.57 && editor->getConstrainer()->getMinimumWidth() == 825
+            && editor->getConstrainer()->getMaximumWidth() == 2200, "resizable 75-200 % at a fixed aspect ratio");
     refreshUi();
-    require(!footer->getText().containsChar('\n'), "footer stays a single line");
-    setToggle(processor, dropforge::parameters::bassEnabled, true);
-    setToggle(processor, dropforge::parameters::rhythmEnabled, true);
+    require(footer.getText().isNotEmpty() && !footer.getText().containsChar('\n'), "footer is one help line");
+
+    setToggle(processor, ids::bassEnabled, true);
     processor.prepareToPlay(48000, 512);
     juce::AudioBuffer<float> audio(2, 512); juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1, 69, static_cast<juce::uint8>(127)), 0);
-    processor.processBlock(audio, midi); panic->onClick(); processor.processBlock(audio, midi);
+    processor.processBlock(audio, midi); editor->panicButton().onClick(); processor.processBlock(audio, midi);
     // Release, latency and the master clipper filter's ringing, as above.
     constexpr int quietFrom = 288 + dropforge::InstrumentCore::latencySamples + dsp_core::Oversampler4xFloat::latencySamples;
     require(audio.getMagnitude(0, quietFrom, 512 - quietFrom) == 0.0f, "Panic clears audio through realtime request");
     if (snapshot.isNotEmpty())
     {
         setOutput(processor, 0);
+        for (const auto* id : {ids::bassLevel, ids::rhythmLevel})
+            processor.parameterState().getParameter(id)->setValueNotifyingHost(processor.parameterState().getParameter(id)->getDefaultValue());
         const juce::File base(snapshot);
-        for (const bool selected : {false, true}) for (int scale : {1, 2})
+        const auto save = [&](const juce::String& name)
         {
-            (selected ? furnace : anvil)->onClick();
-            juce::Image image(juce::Image::ARGB, editor->getWidth()*scale, editor->getHeight()*scale, true, juce::SoftwareImageType{});
-            { juce::Graphics g(image); g.addTransform(juce::AffineTransform::scale(static_cast<float>(scale))); editor->paintEntireComponent(g, false); }
+            refreshUi();
+            juce::Image image(juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true, juce::SoftwareImageType{});
+            { juce::Graphics g(image); editor->paintEntireComponent(g, false); }
             juce::MemoryOutputStream stream;
-            const auto file = base.getSiblingFile(juce::String("ui-") + (selected ? "furnace" : "anvil") + "-" + juce::String(scale) + "x.png");
-            require(juce::PNGImageFormat{}.writeImageToStream(image, stream) && file.replaceWithData(stream.getData(), stream.getDataSize()), "UI snapshot saved");
+            const auto file = base.getSiblingFile("ui-" + name + ".png");
+            require(juce::PNGImageFormat{}.writeImageToStream(image, stream) && file.replaceWithData(stream.getData(), stream.getDataSize()),
+                    "UI snapshot saved");
+        };
+        for (const int percent : {100, 200})
+        {
+            editor->setSize(1100 * percent / 100, 700 * percent / 100);
+            for (int page = 0; page < 2; ++page)
+            {
+                editor->tab(page).onClick();
+                save(juce::String(page == 0 ? "anvil" : "furnace") + "-" + juce::String(percent));
+            }
+        }
+        // Every mode finish once, with Destruction and an option lit, for review.
+        editor->setSize(1100, 700);
+        setToggle(processor, ids::rhythmDestroy, true);
+        setToggle(processor, ids::rhythmMono, true);
+        setToggle(processor, ids::bassEnabled, false);
+        for (int mode = 1; mode < 4; ++mode)
+        {
+            for (const auto* id : {ids::bassMode, ids::rhythmMode})
+            {
+                auto* parameter = processor.parameterState().getParameter(id);
+                parameter->setValueNotifyingHost(parameter->convertTo0to1(static_cast<float>(mode)));
+            }
+            for (int page = 0; page < 2; ++page)
+            {
+                editor->tab(page).onClick();
+                save(juce::String(page == 0 ? "anvil" : "furnace") + "-mode-" + juce::String::charToString(juce::juce_wchar('a' + mode)));
+            }
         }
     }
-    std::cout << "tab power, value entry, defaults, recall, footer and layout passed\n";
+    std::cout << "suite pages, power, modes, Destruction, options, value entry, recall and layout passed\n";
 }
 
 void keyboardTests()
 {
     DropforgeProcessor processor;
-    std::unique_ptr<juce::AudioProcessorEditor> editor(processor.createEditor());
-    LayerTab* furnace = nullptr;
-    for (auto* child : editor->getChildren()) if (auto* tab = dynamic_cast<LayerTab*>(child))
-        if (tab->getButtonText() == "Furnace") furnace = tab;
-    require(furnace != nullptr, "Furnace keyboard tab exists");
+    std::unique_ptr<juce::AudioProcessorEditor> created(processor.createEditor());
+    auto* editor = dynamic_cast<DropforgeEditor*>(created.get());
+    require(editor != nullptr, "suite editor for keyboard checks");
+    auto& furnace = editor->tab(1);
     bool completed = false;
     juce::MessageManager::callAsync([&]
     {
-        require(furnace->keyPressed(juce::KeyPress(juce::KeyPress::returnKey)), "Enter selects tab");
+        require(furnace.keyPressed(juce::KeyPress(juce::KeyPress::returnKey)), "Enter opens a tab");
         juce::Timer::callAfterDelay(100, [&]
         {
-            require(processor.isRhythmPageSelected() && toggle(processor, dropforge::parameters::rhythmEnabled), "keyboard tab selection is audio neutral");
-            require(furnace->keyPressed(juce::KeyPress(juce::KeyPress::returnKey, juce::ModifierKeys::altModifier, 0)), "Alt+Enter toggles power");
-            require(!toggle(processor, dropforge::parameters::rhythmEnabled) && processor.isRhythmPageSelected(), "keyboard power leaves page selected");
+            require(processor.currentPage() == 1 && toggle(processor, dropforge::parameters::rhythmEnabled), "keyboard page change is audio neutral");
+            require(furnace.keyPressed(juce::KeyPress(juce::KeyPress::returnKey, juce::ModifierKeys::altModifier, 0)), "Alt+Enter toggles power");
+            require(!toggle(processor, dropforge::parameters::rhythmEnabled) && processor.currentPage() == 1, "keyboard power leaves the page open");
+            require(editor->keyPressed(juce::KeyPress('1', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == 0, "Ctrl+1 opens Anvil");
+            require(editor->keyPressed(juce::KeyPress('2', juce::ModifierKeys::ctrlModifier, 0)) && processor.currentPage() == 1, "Ctrl+2 opens Furnace");
             completed = true;
             juce::MessageManager::getInstance()->stopDispatchLoop();
         });
