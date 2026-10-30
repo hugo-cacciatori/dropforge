@@ -34,4 +34,20 @@ inline constexpr auto glideMs = "glide_ms";
 inline constexpr auto impactOn = "impact_on";
 inline constexpr auto wheelMode = "wheel_mode";
 inline constexpr auto wheelAmount = "wheel_amount";
+// FX page (SPEC section 8).
+inline constexpr auto fxSendAnvil = "fx_send_anvil";
+inline constexpr auto fxSendFurnace = "fx_send_furnace";
+inline constexpr auto fxSendBlade = "fx_send_blade";
+inline constexpr auto fxDuck = "fx_duck";
+inline constexpr auto fxDelayOn = "fx_delay_on";
+inline constexpr auto fxDelaySync = "fx_delay_sync";
+inline constexpr auto fxDelayDivision = "fx_delay_division";
+inline constexpr auto fxDelayFeel = "fx_delay_feel";
+inline constexpr auto fxDelayMs = "fx_delay_ms";
+inline constexpr auto fxDelayFeedback = "fx_delay_feedback";
+inline constexpr auto fxDelayMode = "fx_delay_mode";
+inline constexpr auto fxDelayWidth = "fx_delay_width";
+inline constexpr auto fxDelayMix = "fx_delay_mix";
+inline constexpr auto fxDelayLowCut = "fx_delay_low_cut";
+inline constexpr auto fxDelayHighCut = "fx_delay_high_cut";
 }

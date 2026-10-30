@@ -130,7 +130,7 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 24, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop; Blade Portamento, time and Octave; Bend Range, Glide, Impact and the wheel");
+    require(source.getParameters().size() == 39, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop; Blade Portamento, time and Octave; Bend Range, Glide, Impact and the wheel; FX sends, ducking and Delay");
     require(!toggle(source, dropforge::parameters::leadEnabled), "Blade is off by default");
     for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode, dropforge::parameters::leadMode})
     {

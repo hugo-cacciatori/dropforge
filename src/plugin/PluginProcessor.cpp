@@ -91,6 +91,38 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::wheelMode, 1}, "Wheel", juce::StringArray{"Roar", "Vibrato"}, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{dropforge::parameters::wheelAmount, 1}, "Wheel Amount", juce::NormalisableRange<float>{0.0f, 1.0f}, 0.0f));
+    // FX page (SPEC section 8): every strip off by default.
+    namespace fx = dropforge::parameters;
+    const auto percent = [&layout](const char* id, const char* name, float max, float fallback)
+    {
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, juce::NormalisableRange<float>{0.0f, max}, fallback,
+                                                               juce::AudioParameterFloatAttributes{}.withLabel("%")));
+    };
+    const auto skewed = [&layout](const char* id, const char* name, float low, float high, float centre, float fallback, const char* unit)
+    {
+        juce::NormalisableRange<float> range{low, high};
+        range.setSkewForCentre(centre);
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{id, 1}, name, range, fallback,
+                                                               juce::AudioParameterFloatAttributes{}.withLabel(unit)));
+    };
+    percent(fx::fxSendAnvil, "Anvil Send", 100.0f, 0.0f);
+    percent(fx::fxSendFurnace, "Furnace Send", 100.0f, 100.0f);
+    percent(fx::fxSendBlade, "Blade Send", 100.0f, 60.0f);
+    percent(fx::fxDuck, "Ducking", 100.0f, 50.0f);
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxDelayOn, 1}, "Delay", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{fx::fxDelaySync, 1}, "Delay Sync", true));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{fx::fxDelayDivision, 1}, "Delay Division",
+        juce::StringArray{"1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars"}, 3));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{fx::fxDelayFeel, 1}, "Delay Feel",
+        juce::StringArray{"Straight", "Dotted", "Triplet"}, 1));
+    skewed(fx::fxDelayMs, "Delay Time", 1.0f, 2000.0f, 300.0f, 375.0f, "ms");
+    percent(fx::fxDelayFeedback, "Delay Feedback", 95.0f, 25.0f);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{fx::fxDelayMode, 1}, "Delay Mode",
+        juce::StringArray{"Stereo", "Ping-pong"}, 1));
+    percent(fx::fxDelayWidth, "Delay Width", 100.0f, 100.0f);
+    percent(fx::fxDelayMix, "Delay Mix", 100.0f, 25.0f);
+    skewed(fx::fxDelayLowCut, "Delay Low Cut", 20.0f, 2000.0f, 250.0f, 280.0f, "Hz");
+    skewed(fx::fxDelayHighCut, "Delay High Cut", 1000.0f, 20000.0f, 6000.0f, 6500.0f, "Hz");
     return layout;
 }
 
@@ -122,6 +154,13 @@ DropforgeProcessor::DropforgeProcessor()
     impactEnabled = state.getRawParameterValue(dropforge::parameters::impactOn);
     wheelModeChoice = state.getRawParameterValue(dropforge::parameters::wheelMode);
     wheelAmountValue = state.getRawParameterValue(dropforge::parameters::wheelAmount);
+    {
+        namespace fx = dropforge::parameters;
+        const std::array<const char*, 15> ids{fx::fxSendAnvil, fx::fxSendFurnace, fx::fxSendBlade, fx::fxDuck, fx::fxDelayOn, fx::fxDelaySync,
+                                              fx::fxDelayDivision, fx::fxDelayFeel, fx::fxDelayMs, fx::fxDelayFeedback, fx::fxDelayMode,
+                                              fx::fxDelayWidth, fx::fxDelayMix, fx::fxDelayLowCut, fx::fxDelayHighCut};
+        for (std::size_t i = 0; i < ids.size(); ++i) fxValues[i] = state.getRawParameterValue(ids[i]);
+    }
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -152,6 +191,7 @@ void DropforgeProcessor::reset()
     core.setLayerLevels(bassLevel->load(), rhythmLevel->load());
     core.setLead(readToggle(leadEnabled, false), leadLevel->load());
     applyModes();
+    applyFx();
     core.reset(readOutputDb());
     panicRequested.store(false, std::memory_order_relaxed);
 }
@@ -178,6 +218,7 @@ void DropforgeProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     core.setLead(readToggle(leadEnabled, false), leadLevel->load());
     core.setLayersEnabled(readToggle(bassEnabled, true), readToggle(rhythmEnabled, true));
     applyModes();
+    applyFx();
     dropforge::processMidiBlock(core, buffer, midi);
     midi.clear();
     publishMeters();
@@ -202,6 +243,38 @@ void DropforgeProcessor::applyModes() noexcept
     core.setWheel(std::clamp(index(wheelModeChoice), 0, 1), wheelAmountValue->load(std::memory_order_relaxed));
     core.setLeadPlaying(std::clamp(index(leadPortamento), 0, 2), leadPortamentoMs->load(std::memory_order_relaxed),
                         std::isfinite(octave) ? static_cast<int>(std::lround(octave)) : 0);
+}
+
+// The FX page in the order of fxValues; the tempo comes from the host each
+// block (120 BPM when it gives none).
+void DropforgeProcessor::applyFx() noexcept
+{
+    const auto value = [this](std::size_t i, float fallback) noexcept
+    {
+        const auto v = fxValues[i]->load(std::memory_order_relaxed);
+        return std::isfinite(v) ? v : fallback;
+    };
+    dropforge::FxChain::Settings settings;
+    settings.sendAnvil = value(0, 0.0f) / 100.0f;
+    settings.sendFurnace = value(1, 100.0f) / 100.0f;
+    settings.sendBlade = value(2, 60.0f) / 100.0f;
+    settings.duck = value(3, 50.0f) / 100.0f;
+    settings.delayOn = value(4, 0.0f) >= 0.5f;
+    settings.delaySync = value(5, 1.0f) >= 0.5f;
+    settings.delayDivision = std::clamp(static_cast<int>(std::lround(value(6, 3.0f))), 0, 7);
+    settings.delayFeel = static_cast<dropforge::FxChain::Feel>(std::clamp(static_cast<int>(std::lround(value(7, 1.0f))), 0, 2));
+    settings.delayMs = value(8, 375.0f);
+    settings.delayFeedback = value(9, 25.0f) / 100.0f;
+    settings.delayPingPong = value(10, 1.0f) >= 0.5f;
+    settings.delayWidth = value(11, 100.0f) / 100.0f;
+    settings.delayMix = value(12, 25.0f) / 100.0f;
+    settings.delayLowCutHz = value(13, 280.0f);
+    settings.delayHighCutHz = value(14, 6500.0f);
+    double bpm = 120.0;
+    if (auto* head = getPlayHead())
+        if (const auto position = head->getPosition())
+            if (const auto hostBpm = position->getBpm()) bpm = *hostBpm;
+    core.setFx(settings, bpm);
 }
 
 void DropforgeProcessor::publishMeters() noexcept

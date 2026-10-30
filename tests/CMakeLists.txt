@@ -21,6 +21,11 @@ add_executable(dropforge_performance_tests PerformanceTests.cpp)
 target_link_libraries(dropforge_performance_tests PRIVATE dropforge_core)
 add_test(NAME performance COMMAND dropforge_performance_tests)
 
+# The FX page's chain: sends, Delay, tempo, tails (SPEC section 8).
+add_executable(dropforge_fx_tests FxTests.cpp)
+target_link_libraries(dropforge_fx_tests PRIVATE dropforge_core)
+add_test(NAME fx_chain COMMAND dropforge_fx_tests)
+
 # Gates for every Anvil x Furnace mode pair, clean and destroyed (SPEC section 12).
 add_executable(dropforge_combination_tests CombinationTests.cpp)
 target_include_directories(dropforge_combination_tests PRIVATE "${CMAKE_SOURCE_DIR}/shared/dsp-core/tests")

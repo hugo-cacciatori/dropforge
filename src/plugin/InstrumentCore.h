@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MidiDispatch.h"
+#include "dsp/FxChain.h"
 #include "dsp/Master.h"
 #include "dsp/OutputGain.h"
 #include <algorithm>
@@ -26,6 +27,7 @@ public:
         engine.setBassParameters(splitHz, drive);
         engine.setRhythmParameters(drive);
         engine.reset();
+        fx.prepare(sampleRate);
         master.prepare(sampleRate);
         output.prepare(sampleRate, outputDb);
         meters = {};
@@ -35,6 +37,7 @@ public:
         engine.setBassParameters(splitHz, drive);
         engine.setRhythmParameters(drive);
         engine.reset();
+        fx.reset();
         master.reset();
         output.reset(outputDb);
         meters = {};
@@ -61,9 +64,23 @@ public:
     }
     void setLayerLevels(float bassDb, float rhythmDb) noexcept { engine.setLayerLevels(bassDb, rhythmDb); }
     // Enables choose playing policy; output masks below only isolate that policy.
-    void setLayersEnabled(bool bass, bool rhythm) noexcept { engine.setLayersEnabled(bass, rhythm); }
+    void setLayersEnabled(bool bass, bool rhythm) noexcept
+    {
+        engine.setLayersEnabled(bass, rhythm);
+        powered[0] = bass; powered[1] = rhythm;
+        clearTailsWhenAllOff();
+    }
     // Blade (SPEC section 3): power and Level.
-    void setLead(bool on, float levelDb) noexcept { engine.setLeadEnabled(on); engine.setLeadLevel(levelDb); }
+    void setLead(bool on, float levelDb) noexcept
+    {
+        engine.setLeadEnabled(on);
+        engine.setLeadLevel(levelDb);
+        powered[2] = on;
+        clearTailsWhenAllOff();
+    }
+    // The FX page (SPEC section 8) at the host's tempo (BPM; anything
+    // outside 20-300, such as no host tempo, plays at 120).
+    void setFx(const FxChain::Settings& settings, double bpm) noexcept { fx.set(settings, bpm); }
     // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
     void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
     // Performance (SPEC section 3): Bend Range in semitones; Glide on/off and
@@ -102,13 +119,33 @@ public:
     {
         for (int channel = 1; channel <= 16; ++channel)
             engine.allNotesOff(channel);
+        fx.reset(); // Panic clears the echoes too.
     }
     void midi(const std::uint8_t* bytes, int size) noexcept { dispatchMidi(engine, bytes, size); }
     void process(float* left, float* right, int samples,
                  LayerMask outputMask = LayerMask::all, LayerTaps taps = {},
                  BassComponent component = BassComponent::all) noexcept
     {
-        engine.process(left, right, samples, outputMask, taps, component);
+        if (!fx.active()) engine.process(left, right, samples, outputMask, taps, component);
+        else
+        {
+            // The FX sends need each instrument's signal: render in short
+            // runs through scratch taps (the engine is block-size invariant).
+            for (int at = 0; at < samples; at += fxRun)
+            {
+                const auto count = std::min(fxRun, samples - at);
+                LayerTaps scratch{tapBassLeft.data(), tapBassRight.data(), tapRhythmLeft.data(), tapRhythmRight.data(), tapLead.data()};
+                engine.process(left + at, right + at, count, outputMask, scratch, component);
+                const auto forward = [count](const std::array<float, fxRun>& from, float* to, int offset) noexcept
+                {
+                    if (to != nullptr) std::copy_n(from.begin(), count, to + offset);
+                };
+                forward(tapBassLeft, taps.bassLeft, at); forward(tapBassRight, taps.bassRight, at);
+                forward(tapRhythmLeft, taps.rhythmLeft, at); forward(tapRhythmRight, taps.rhythmRight, at);
+                forward(tapLead, taps.lead, at);
+                fx.process(left + at, right + at, scratch, outputMask, count);
+            }
+        }
         master.process(left, right, samples);
         float* channels[]{left, right};
         output.process(channels, 2, samples);
@@ -137,7 +174,19 @@ public:
     }
 
 private:
+    // Every instrument switched off clears the echoes (SPEC section 8).
+    void clearTailsWhenAllOff() noexcept
+    {
+        const auto allOff = !powered[0] && !powered[1] && !powered[2];
+        if (allOff && !wasAllOff) fx.reset();
+        wasAllOff = allOff;
+    }
     Engine engine;
+    FxChain fx;
+    static constexpr int fxRun = 256;
+    std::array<float, fxRun> tapBassLeft{}, tapBassRight{}, tapRhythmLeft{}, tapRhythmRight{}, tapLead{};
+    std::array<bool, 3> powered{true, true, false};
+    bool wasAllOff = false;
     Master master;
     OutputGain output;
     Meters meters;
