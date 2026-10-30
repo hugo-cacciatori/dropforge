@@ -64,6 +64,14 @@ public:
     void setLeadMode(int mode) noexcept { leadChoice.mode = std::clamp(mode, 0, 3); updateBlade(); }
     void setLeadDestruction(bool on) noexcept { leadChoice.destroy = on; updateBlade(); }
     int leadMode() const noexcept { return leadChoice.mode; }
+    // Blade's Portamento (SPEC section 3): 0 Off, 1 Legato (slides only
+    // between overlapping notes, no new attack), 2 Always (also slides into a
+    // new attack from the last note); time 0-1000 ms. Octave -1, 0 or +1.
+    enum class Portamento { off, legato, always };
+    void setLeadPortamento(Portamento mode, float milliseconds) noexcept;
+    void setLeadOctave(int octave) noexcept;
+    // Test hook: the pitch Blade's playing voice sounds now, before bend.
+    double leadPitch() const noexcept { return blades[leadSlot].currentPitch(); }
     // Blade's weight against Furnace at default Levels (SPEC section 4): in
     // front but not louder. -13 dB puts a held top note about 3 LU under the
     // reference chord's wall; tuned by ear in listening round 3.
@@ -169,6 +177,12 @@ private:
     void finishLeadFade() noexcept;
     bool leadEnabled = false, leadSuspended = true;
     int leadChannel = 1;
+    Portamento portamento = Portamento::off;
+    int portamentoSamples = 0, leadOctave = 0;
+    float portamentoMs = 60.0f;
+    bool leadKeyHeld = false; // a Blade key was held before the current change
+    double lastLeadHz = 0.0;  // where "Always" slides from after a gap
+    double leadHz(int note) const noexcept { return NoteRouter::frequency(note) * std::exp2(static_cast<double>(leadOctave)); }
     dsp_core::LinearRamp leadPower, leadMixLevel, leadBendOffset;
     double leadMixTarget = 1.0;
     void updateLead(NoteRouter::Change change) noexcept;

@@ -260,6 +260,109 @@ void modeSwitching()
     require(step <= 1.1f * natural, "switching Blade's mode or Destruction does not click");
 }
 
+// Portamento and Octave (SPEC section 3). Pitches are read from the voice
+// (before bend), so the checks are exact rather than spectral estimates.
+void portamentoAndOctave()
+{
+    constexpr double rate = 48000.0;
+    const auto hz = [](int note) { return 440.0 * std::exp2((note - 69) / 12.0); };
+    const auto near = [](double a, double b) { return std::abs(std::log2(a / b)) < 1.0e-6; };
+    using Portamento = Engine::Portamento;
+
+    // Off: a new top note jumps at once, with a fresh attack.
+    {
+        auto engine = leadEngine(rate, false, false);
+        engine.setLeadPortamento(Portamento::off, 200.0f);
+        engine.noteOn(1, 60, 110);
+        render(engine, 4800);
+        engine.noteOn(1, 67, 110);
+        render(engine, 64);
+        require(near(engine.leadPitch(), hz(67)), "Portamento Off: the new note sounds at once");
+    }
+    // Legato: overlapping notes slide over the time, evenly in pitch; a note
+    // after a gap starts fresh at its own pitch.
+    for (const float ms : {60.0f, 250.0f})
+    {
+        auto engine = leadEngine(rate, false, false);
+        engine.setLeadPortamento(Portamento::legato, ms);
+        engine.noteOn(1, 60, 110);
+        render(engine, 4800);
+        engine.noteOn(1, 72, 110); // overlaps the held C4: one octave up
+        const auto total = static_cast<int>(std::lround(rate * ms / 1000.0));
+        render(engine, total / 2);
+        const auto midway = std::log2(engine.leadPitch() / hz(60));
+        require(std::abs(midway - 0.5) < 0.03, "Legato slides evenly in pitch: half the time, half the octave");
+        render(engine, total / 2 + 64);
+        require(near(engine.leadPitch(), hz(72)), "Legato lands exactly on the new note after its time");
+        // No new attack while sliding: the output never dips to silence.
+        engine.noteOff(1, 72);
+        render(engine, 4800);
+        engine.noteOff(1, 60);
+        render(engine, 4800);
+        engine.noteOn(1, 64, 110);
+        render(engine, 64);
+        require(near(engine.leadPitch(), hz(64)), "Legato: a note after a gap starts at its own pitch");
+    }
+    // Legato keeps the line going: the overlapping note never retriggers.
+    {
+        auto engine = leadEngine(rate, false, false);
+        engine.setLeadPortamento(Portamento::legato, 120.0f);
+        engine.noteOn(1, 60, 110);
+        const auto before = render(engine, 9600).lead;
+        engine.noteOn(1, 64, 110);
+        const auto during = render(engine, 9600).lead;
+        const auto held = peak(before, 4800);
+        require(peak(during, 0, 480) > 0.5f * held, "Legato: no new attack, the sound carries straight on");
+    }
+    // Always: even after a gap, the new note slides from the last one.
+    {
+        auto engine = leadEngine(rate, false, false);
+        engine.setLeadPortamento(Portamento::always, 100.0f);
+        engine.noteOn(1, 60, 110);
+        render(engine, 4800);
+        engine.noteOff(1, 60);
+        render(engine, 9600);
+        engine.noteOn(1, 67, 110);
+        render(engine, 64);
+        const auto early = engine.leadPitch();
+        require(early < hz(67) * 0.98 && early > hz(60), "Always: a note after a gap slides up from the last note");
+        render(engine, 4800);
+        require(near(engine.leadPitch(), hz(67)), "Always: and lands on it");
+    }
+    // Octave: -1 and +1 relative to the top key, also while it is held.
+    {
+        auto engine = leadEngine(rate, false, false);
+        engine.setLeadOctave(1);
+        engine.noteOn(1, 60, 110);
+        render(engine, 64);
+        require(near(engine.leadPitch(), hz(72)), "Octave +1 plays the top key an octave up");
+        engine.setLeadOctave(-1);
+        render(engine, 64);
+        require(near(engine.leadPitch(), hz(48)), "Octave -1 moves the held note an octave down at once");
+        require(engine.leadTarget().note == 60, "Octave changes Blade's pitch, not which key it follows");
+    }
+    // Slides render identically at every block size.
+    const auto run = [](int block)
+    {
+        auto engine = leadEngine(48000.0, false, false);
+        engine.setLeadPortamento(Portamento::always, 180.0f);
+        engine.noteOn(1, 55, 100);
+        auto audio = render(engine, 7000, block).lead;
+        engine.noteOn(1, 67, 120);
+        auto more = render(engine, 7000, block).lead;
+        audio.insert(audio.end(), more.begin(), more.end());
+        engine.noteOff(1, 67);
+        engine.noteOff(1, 55);
+        engine.noteOn(1, 48, 90);
+        more = render(engine, 9000, block).lead;
+        audio.insert(audio.end(), more.begin(), more.end());
+        return audio;
+    };
+    const auto a = run(512);
+    require(a == run(1) && a == run(73), "Portamento renders identically at blocks 1, 73 and 512");
+    std::cout << "portamento and octave passed\n";
+}
+
 int main()
 {
     offByDefaultAndMono();
@@ -269,5 +372,6 @@ int main()
     balance();
     modeLoudness();
     modeSwitching();
+    portamentoAndOctave();
     return 0;
 }

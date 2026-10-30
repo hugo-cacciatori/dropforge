@@ -130,7 +130,7 @@ void stateTests()
     restoreXml(source, "<DropforgeState schemaVersion='1'/>");
     require(changes.nonParameterChanges == 0, "recall does not mark the project dirty");
     source.removeListener(&changes);
-    require(source.getParameters().size() == 15, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop");
+    require(source.getParameters().size() == 18, "output; power, level, mode and Destruction for each instrument; Furnace Mono and Drop; Blade Portamento, time and Octave");
     require(!toggle(source, dropforge::parameters::leadEnabled), "Blade is off by default");
     for (const auto* id : {dropforge::parameters::bassMode, dropforge::parameters::rhythmMode, dropforge::parameters::leadMode})
     {
@@ -557,6 +557,23 @@ void editorTests(const juce::String& snapshot)
         modes.button(0).onClick();
         require(choice(processor, modeId) == 0 && !toggle(processor, destroyId), "mode and Destruction return to defaults");
     }
+    // Blade's playing controls: Portamento, Octave and Time.
+    auto& portamento = *bladePage.choiceSelector(0);
+    auto& octave = *bladePage.choiceSelector(1);
+    auto& time = *bladePage.extraKnob(0);
+    require(portamento.selectedIndex() == 0 && octave.selectedIndex() == 1 && std::abs(time.getValue() - 60.0) < 1e-3,
+            "Blade starts with Portamento Off, Octave 0 and 60 ms");
+    portamento.button(2).onClick();
+    octave.button(0).onClick();
+    require(choice(processor, ids::leadPortamento) == 2 && choice(processor, ids::leadOctave) == -1,
+            "the Portamento and Octave selectors write their parameters");
+    processor.parameterState().getParameter(ids::leadPortamento)->setValueNotifyingHost(0.0f);
+    require(portamento.selectedIndex() == 0, "host changes reach the Portamento selector");
+    time.setValue(250.0, juce::sendNotificationSync);
+    require(std::abs(processor.parameterState().getRawParameterValue(ids::leadPortamentoMs)->load() - 250.0f) < 0.01f,
+            "the Time knob writes Portamento time");
+    octave.button(1).onClick();
+    time.setValue(60.0, juce::sendNotificationSync);
     for (const auto& [name, id] : {std::pair{"Mono", ids::rhythmMono}, std::pair{"Drop", ids::rhythmDrop}})
     {
         auto& option = *furnacePage.optionSwitch(name);

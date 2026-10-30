@@ -21,6 +21,8 @@ struct Options
     float splitHz = 140.0f, drive = 0.5f;
     bool bassEnabled = true, rhythmEnabled = true, bladeEnabled = false, bladeDestroy = false;
     std::string blade = "a";
+    int bladePortamento = 0, bladeOctave = 0;
+    float bladePortamentoMs = 60.0f;
     dropforge::LayerMask mask = dropforge::LayerMask::all;
     std::string maskName = "all";
     dropforge::BassComponent bassComponent = dropforge::BassComponent::all;
@@ -62,6 +64,21 @@ Options parse(int argc, char** argv)
         else if (flag == "--rhythm-enabled") options.rhythmEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--blade-enabled") options.bladeEnabled = integer(argv[i + 1], 0, 1) != 0;
         else if (flag == "--blade-destroy") options.bladeDestroy = integer(argv[i + 1], 0, 1) != 0;
+        else if (flag == "--blade-porta")
+        {
+            const std::string mode = argv[i + 1];
+            if (mode == "off") options.bladePortamento = 0;
+            else if (mode == "legato") options.bladePortamento = 1;
+            else if (mode == "always") options.bladePortamento = 2;
+            else throw std::runtime_error("Blade Portamento must be off, legato or always");
+        }
+        else if (flag == "--blade-porta-ms")
+        {
+            const auto ms = number(argv[i + 1]);
+            if (ms < 0.0 || ms > 1000.0) throw std::runtime_error("Portamento time must be 0 to 1000 ms");
+            options.bladePortamentoMs = static_cast<float>(ms);
+        }
+        else if (flag == "--blade-octave") options.bladeOctave = integer(argv[i + 1], -1, 1);
         else if (flag == "--blade")
         {
             options.blade = argv[i + 1];
@@ -220,6 +237,7 @@ void render(const Options& options)
     core.setLayerLevels(options.anvilLevelDb, 0.0f);
     core.setLead(options.bladeEnabled, options.bladeLevelDb);
     core.setLeadMode(options.blade[0] - 'a', options.bladeDestroy);
+    core.setLeadPlaying(options.bladePortamento, options.bladePortamentoMs, options.bladeOctave);
     core.prepare(options.rate, options.outputDb, options.splitHz, options.drive);
     juce::AudioBuffer<float> audio(2, options.block);
     juce::ScopedNoDenormals noDenormals;
@@ -284,6 +302,9 @@ void render(const Options& options)
     metrics->setProperty("blade_level_db", options.bladeLevelDb);
     metrics->setProperty("blade", juce::String(options.blade));
     metrics->setProperty("blade_destroy", options.bladeDestroy);
+    metrics->setProperty("blade_portamento", options.bladePortamento);
+    metrics->setProperty("blade_portamento_ms", options.bladePortamentoMs);
+    metrics->setProperty("blade_octave", options.bladeOctave);
     metrics->setProperty("latency_samples", dropforge::InstrumentCore::latencySamples);
     metrics->setProperty("tail_seconds", options.tail);
     metrics->setProperty("frames", frames);
@@ -323,6 +344,7 @@ int main(int argc, char** argv)
                      "  [--anvil-level-db 0] (Anvil Level, -60 to +6 dB, as the plugin parameter)\n"
                      "  [--blade-enabled 0|1] [--blade-level-db 0] (Blade power, default off, and Level)\n"
                      "  [--blade a|b|c|d] [--blade-destroy 0|1] (Blade mode, default a, and Destruction)\n"
+                     "  [--blade-porta off|legato|always] [--blade-porta-ms 60] [--blade-octave -1|0|1]\n"
                      "MIDI type 0/1; stereo float32 WAV; new output files only; maximum 600 seconds.\n";
         return 0;
     }

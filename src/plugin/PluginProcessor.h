@@ -72,6 +72,9 @@ private:
     std::atomic<float>* leadLevel = nullptr;
     std::atomic<float>* leadMode = nullptr;
     std::atomic<float>* leadDestroy = nullptr;
+    std::atomic<float>* leadPortamento = nullptr;
+    std::atomic<float>* leadPortamentoMs = nullptr;
+    std::atomic<float>* leadOctave = nullptr;
     void applyModes() noexcept;
     double preparedRate = 44100.0;
     std::atomic<bool> panicRequested{false};

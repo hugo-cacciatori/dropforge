@@ -69,6 +69,9 @@ void Engine::reset() noexcept
         blades[slot].prepare(rate, attackSamples, releaseSamples, transitionSamples);
     }
     leadChannel = 1;
+    leadKeyHeld = false;
+    lastLeadHz = 0.0;
+    portamentoSamples = static_cast<int>(std::lround(rate * portamentoMs / 1000.0));
     leadBendOffset.reset(0.0);
     leadMixLevel.reset(leadMixTarget);
     leadPower.reset(leadEnabled ? 1.0 : 0.0);
@@ -282,10 +285,26 @@ void Engine::updateLead(NoteRouter::Change change) noexcept
     const auto key = router.leadKey();
     if (change == NoteRouter::Change::attack)
     {
+        const auto hz = leadHz(key.note);
         leadChannel = key.channel;
         leadBendOffset.reset(0.0);
-        blades[leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
-        if (leadFade > 0) blades[1 - leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
+        const auto slides = portamento != Portamento::off;
+        for (std::size_t i = 0; i < (leadFade > 0 ? 2u : 1u); ++i)
+        {
+            auto& voice = blades[i == 0 ? leadSlot : 1 - leadSlot];
+            if (slides && leadKeyHeld)
+            {
+                // Overlapping notes: one continuous line, no new attack.
+                voice.legato(hz, portamentoSamples);
+                voice.retargetVelocity(key.velocity);
+            }
+            else if (portamento == Portamento::always && lastLeadHz > 0.0)
+                voice.start(hz, key.velocity, portamentoSamples, lastLeadHz);
+            else
+                voice.start(hz, key.velocity);
+        }
+        leadKeyHeld = true;
+        lastLeadHz = hz;
     }
     else if (change == NoteRouter::Change::retarget)
     {
@@ -296,7 +315,30 @@ void Engine::updateLead(NoteRouter::Change change) noexcept
         for (auto& voice : blades) voice.retargetVelocity(key.velocity);
     }
     else if (change == NoteRouter::Change::release)
+    {
         for (auto& voice : blades) voice.stop();
+        leadKeyHeld = false;
+    }
+}
+
+void Engine::setLeadPortamento(Portamento mode, float milliseconds) noexcept
+{
+    portamento = mode;
+    portamentoMs = std::isfinite(milliseconds) ? std::clamp(milliseconds, 0.0f, 1000.0f) : 60.0f;
+    portamentoSamples = static_cast<int>(std::lround(rate * portamentoMs / 1000.0));
+}
+
+// Octave moves the held note at once (oscillators keep their phase: no
+// click), still in tune with Furnace's top note an octave apart.
+void Engine::setLeadOctave(int octave) noexcept
+{
+    octave = std::clamp(octave, -1, 1);
+    if (octave == leadOctave) return;
+    leadOctave = octave;
+    const auto key = router.leadKey();
+    if (!leadEnabled || !key.held() || !leadKeyHeld) return;
+    lastLeadHz = leadHz(key.note);
+    for (auto& voice : blades) voice.legato(lastLeadHz, 0);
 }
 
 void Engine::configureBlade(std::size_t slot) noexcept
@@ -319,7 +361,13 @@ void Engine::updateBlade() noexcept
     leadSlot = 1 - leadSlot;
     configureBlade(leadSlot);
     const auto key = router.leadKey();
-    if (leadEnabled && key.held()) blades[leadSlot].start(NoteRouter::frequency(key.note), key.velocity);
+    // The incoming mode takes over the held note at its current pitch (even
+    // mid-slide) and finishes any slide toward the key.
+    if (leadEnabled && key.held())
+    {
+        const auto from = blades[1 - leadSlot].currentPitch(), hz = leadHz(key.note);
+        blades[leadSlot].start(hz, key.velocity, from > 1.0 && from != hz ? portamentoSamples : 0, from);
+    }
     leadFade = modeFadeSamples;
 }
 
@@ -338,6 +386,7 @@ void Engine::setLeadEnabled(bool on) noexcept
     if (on)
     {
         leadSuspended = false;
+        leadKeyHeld = false; // re-entry is a fresh attack, never a slide
         updateLead(router.leadKey().held() ? NoteRouter::Change::attack : NoteRouter::Change::release);
     }
 }

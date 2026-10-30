@@ -12,12 +12,18 @@ namespace dropforge::ui
 struct PageSpec
 {
     struct Option { const char* id; const char* name; const char* help; };
+    // A small choice (values first, first + 1, ...) and an extra knob: the
+    // playing controls of an instrument (Blade: Portamento, Time, Octave).
+    struct Choice { const char* id; const char* name; const char* help; std::vector<const char*> labels; float first; };
+    struct Knob { const char* id; const char* name; const char* help; const char* suffix; };
     const InstrumentStyle& style;
     const char* powerId;
     const char* modeId;
     const char* levelId;
     const char* destroyId;
     std::vector<Option> options;
+    std::vector<Choice> choices{};
+    std::vector<Knob> knobs{};
 };
 
 // An instrument page: header (name, power, role, mode selector) above the
@@ -61,16 +67,46 @@ public:
             button.setTooltip(title + " " + option.name + ": " + option.help);
             optionAttachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(state, option.id, button));
         }
+        for (const auto& choice : spec.choices)
+            choiceSelectors.push_back(std::make_unique<ChoiceSelector>(*state.getParameter(choice.id), title + " " + choice.name,
+                                                                       choice.help, choice.labels, choice.first));
+        for (const auto& knob : spec.knobs)
+        {
+            auto& control = *extraKnobs.emplace_back(std::make_unique<NumericKnob>());
+            control.setTitle(title + " " + juce::String(knob.name).toLowerCase());
+            control.setTooltip(title + " " + knob.name + ": " + knob.help + " Double-click resets; click the value to type.");
+            control.setHelpText(control.getTooltip());
+            control.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+            control.setNumDecimalPlacesToDisplay(0);
+            control.setTextValueSuffix(knob.suffix);
+            control.setPopupDisplayEnabled(false, false, nullptr);
+            control.setWantsKeyboardFocus(true);
+            knobAttachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(state, knob.id, control));
+            auto* parameter = state.getParameter(knob.id);
+            control.setDoubleClickReturnValue(true, parameter->convertFrom0to1(parameter->getDefaultValue()));
+            control.onEntryGesture = [parameter](bool begin) { if (begin) parameter->beginChangeGesture(); else parameter->endChangeGesture(); };
+        }
         for (auto* button : buttons()) button->setHelpText(button->getTooltip());
         level.setHelpText(level.getTooltip());
         for (auto* child : std::initializer_list<juce::Component*>{&power, &modes, &level, &levelLabel, &destruction})
             addAndMakeVisible(child);
         for (auto& button : optionButtons) addAndMakeVisible(*button);
+        for (auto& selector : choiceSelectors) addAndMakeVisible(*selector);
+        for (auto& knob : extraKnobs) addAndMakeVisible(*knob);
         showMode(modes.selectedMode());
     }
 
     const PageSpec& pageSpec() const noexcept { return spec; }
     NumericKnob& levelKnob() noexcept { return level; }
+    ChoiceSelector* choiceSelector(std::size_t index) noexcept { return index < choiceSelectors.size() ? choiceSelectors[index].get() : nullptr; }
+    NumericKnob* extraKnob(std::size_t index) noexcept { return index < extraKnobs.size() ? extraKnobs[index].get() : nullptr; }
+    // Every knob on the page, for closing typing fields on page changes.
+    std::vector<NumericKnob*> knobs()
+    {
+        std::vector<NumericKnob*> all{&level};
+        for (auto& knob : extraKnobs) all.push_back(knob.get());
+        return all;
+    }
     ModeSelector& modeSelector() noexcept { return modes; }
     SwitchButton& powerSwitch() noexcept { return power; }
     SwitchButton& destructionSwitch() noexcept { return destruction; }
@@ -84,6 +120,8 @@ public:
         std::vector<juce::Button*> all{&power, &destruction};
         for (int i = 0; i < 4; ++i) all.push_back(&modes.button(i));
         for (auto& button : optionButtons) all.push_back(button.get());
+        for (auto& selector : choiceSelectors)
+            for (std::size_t i = 0; i < selector->size(); ++i) all.push_back(&selector->button(i));
         return all;
     }
 
@@ -95,8 +133,8 @@ public:
         const auto finish = finishFor(spec.style, mode);
         power.setAccent(spec.style.identity);
         for (auto& button : optionButtons) button->setAccent(finish.accent);
-        level.setColour(juce::Slider::rotarySliderFillColourId, finish.accent);
-        level.repaint();
+        for (auto& selector : choiceSelectors) selector->setAccent(finish.accent);
+        for (auto* knob : knobs()) { knob->setColour(juce::Slider::rotarySliderFillColourId, finish.accent); knob->repaint(); }
         repaint();
     }
 
@@ -146,6 +184,15 @@ public:
             g.setFont(titleFont(16.0f));
             g.drawText("OPTIONS", optionColumn().withHeight(22), juce::Justification::centredLeft, false);
         }
+        // Labels above the playing controls (first choice, knobs, second choice).
+        g.setColour(colours::dimText);
+        g.setFont(titleFont(16.0f));
+        const auto label = [&](const juce::String& text, juce::Rectangle<int> control)
+        {
+            g.drawText(text.toUpperCase(), control.withY(control.getY() - 24).withHeight(22), juce::Justification::centredLeft, false);
+        };
+        for (std::size_t i = 0; i < choiceSelectors.size(); ++i) label(spec.choices[i].name, choiceSelectors[i]->getBounds());
+        for (std::size_t i = 0; i < extraKnobs.size(); ++i) label(spec.knobs[i].name, extraKnobs[i]->getBounds());
     }
 
     void resized() override
@@ -157,6 +204,12 @@ public:
         level.setBounds(plate.getX() + 60, plate.getY() + 130, 220, 230);
         auto column = optionColumn().withTrimmedTop(30);
         for (auto& button : optionButtons) button->setBounds(column.removeFromTop(60).withTrimmedBottom(12));
+        // Playing controls: the first choice across the column, then the
+        // knob with the second choice beside it.
+        const auto x = plate.getX() + 330, y = plate.getY();
+        if (!choiceSelectors.empty()) choiceSelectors[0]->setBounds(x, y + 134, 300, 40);
+        if (!extraKnobs.empty()) extraKnobs[0]->setBounds(x, y + 214, 110, 120);
+        if (choiceSelectors.size() > 1) choiceSelectors[1]->setBounds(x + 140, y + 234, 160, 40);
         destruction.setBounds(plate.getRight() - 360, plate.getY() + 150, 300, 110);
     }
 
@@ -270,6 +323,9 @@ private:
     juce::AudioProcessorValueTreeState::ButtonAttachment powerAttachment, destroyAttachment;
     juce::AudioProcessorValueTreeState::SliderAttachment levelAttachment;
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> optionAttachments;
+    std::vector<std::unique_ptr<ChoiceSelector>> choiceSelectors;
+    std::vector<std::unique_ptr<NumericKnob>> extraKnobs;
+    std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>> knobAttachments;
     int shownMode = -1;
 };
 }

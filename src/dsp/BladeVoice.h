@@ -109,7 +109,7 @@ public:
         for (std::size_t i = 0; i < oscillators.size(); ++i) oscillators[i].reset(startPhases[i]);
         subPhase = fmPhase = 0;
         fmLast = 0.0f;
-        frequency = 0.0;
+        logPitch.reset(0.0);
         pitchHz = -1.0;
         controlCountdown = 0;
         pendingAttack = false;
@@ -118,14 +118,33 @@ public:
     }
     // A hard attack. A sounding voice keeps its oscillators running (no phase
     // jump) and crossfades from its last output once the new note arrives.
-    void start(double hz, int noteVelocity) noexcept
+    // With slideSamples > 0 the pitch starts at fromHz and slides to hz
+    // (Portamento "Always" after a gap).
+    void start(double hz, int noteVelocity, int slideSamples = 0, double fromHz = 0.0) noexcept
     {
-        frequency = hz;
+        if (slideSamples > 0 && fromHz > 0.0)
+        {
+            logPitch.reset(std::log2(fromHz));
+            logPitch.setTarget(std::log2(hz), slideSamples);
+        }
+        else logPitch.reset(std::log2(hz));
         controlCountdown = 0; // take the new pitch on the next sample
         velocity.reset(std::clamp(noteVelocity, 1, 127) / 127.0);
         envelope.start();
         pendingAttack = true;
     }
+    // Legato: a new pitch without a new attack, sliding over slideSamples
+    // (0 jumps at once; the oscillators keep their phase, so no click).
+    // The slide is even in pitch: a semitone takes as long at the top as at
+    // the bottom of the range (SPEC section 3).
+    void legato(double hz, int slideSamples) noexcept
+    {
+        if (slideSamples > 0) logPitch.setTarget(std::log2(hz), slideSamples);
+        else logPitch.reset(std::log2(hz));
+        controlCountdown = 0;
+    }
+    // The pitch the voice plays now, before bend (for glides and tests).
+    double currentPitch() const noexcept { return std::exp2(logPitch.value()); }
     void stop() noexcept { envelope.stop(); }
     void retargetVelocity(int noteVelocity) noexcept
     {
@@ -136,9 +155,13 @@ public:
 
     float next(double bendRatio) noexcept
     {
-        if (controlCountdown == 0)
+        // The slide advances every sample; the oscillators follow it at
+        // control rate (0.7 ms steps at 48 kHz, too fine to hear as stepping).
+        const auto sliding = logPitch.moving();
+        logPitch.next();
+        if (controlCountdown == 0 || (sliding && !logPitch.moving())) // and land exactly on the target
         {
-            setPitch(frequency * bendRatio);
+            setPitch(std::exp2(logPitch.value()) * bendRatio);
             controlCountdown = controlBlock;
         }
         --controlCountdown;
@@ -280,7 +303,8 @@ private:
     static constexpr std::array<std::uint32_t, 3> startPhases{0x2b7e1516u, 0x9e3779b9u, 0x5bd1e995u};
 
     Design current{};
-    double rate = 48000.0, frequency = 0.0, pitchHz = -1.0;
+    double rate = 48000.0, pitchHz = -1.0;
+    dsp_core::LinearRamp logPitch; // log2 of the pitch in hertz, before bend
     int transitionSamples = 96, transitionRemaining = 0, controlCountdown = 0;
     bool pendingAttack = false;
     float lastOutput = 0.0f, transitionStart = 0.0f;

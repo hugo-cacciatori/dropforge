@@ -53,7 +53,11 @@ DropforgeEditor::DropforgeEditor(DropforgeProcessor& processor)
     pages[1] = std::make_unique<InstrumentPage>(state, PageSpec{furnaceStyle, ids::rhythmEnabled, ids::rhythmMode, ids::rhythmLevel, ids::rhythmDestroy,
         {{ids::rhythmMono, "Mono", "folds the wall to the centre, for a tight, focused chord without phasing."},
          {ids::rhythmDrop, "Drop", "plays the wall an octave down, in unison with Anvil, for the heaviest drops."}}});
-    pages[2] = std::make_unique<InstrumentPage>(state, PageSpec{bladeStyle, ids::leadEnabled, ids::leadMode, ids::leadLevel, ids::leadDestroy, {}});
+    pages[2] = std::make_unique<InstrumentPage>(state, PageSpec{bladeStyle, ids::leadEnabled, ids::leadMode, ids::leadLevel, ids::leadDestroy, {},
+        {{ids::leadPortamento, "Portamento", "Off jumps to each note; Legato slides between overlapping notes without a new attack; "
+                                               "Always also slides into a new note from the last one.", {"Off", "Legato", "Always"}, 0.0f},
+         {ids::leadOctave, "Octave", "plays the top key an octave down or up, still in tune with Furnace.", {"-1", "0", "+1"}, -1.0f}},
+        {{ids::leadPortamentoMs, "Time", "how long Portamento takes to reach the new note.", " ms"}}});
     for (int page = 0; page < pageCount; ++page)
     {
         auto& tab = *(tabs[(size_t) page] = std::make_unique<InstrumentTab>(pages[(size_t) page]->pageSpec().style));
@@ -131,7 +135,7 @@ DropforgeEditor::~DropforgeEditor()
 void DropforgeEditor::mouseDown(const juce::MouseEvent& event)
 {
     output.commitIfOutside(event.eventComponent);
-    for (auto& page : pages) page->levelKnob().commitIfOutside(event.eventComponent);
+    for (auto& page : pages) for (auto* knob : page->knobs()) knob->commitIfOutside(event.eventComponent);
 }
 
 bool DropforgeEditor::keyPressed(const juce::KeyPress& key)
@@ -210,7 +214,7 @@ void DropforgeEditor::togglePower(int page)
 
 void DropforgeEditor::selectPage(int page)
 {
-    if (page != owner.currentPage()) pages[(size_t) owner.currentPage()]->levelKnob().finishEntry(true);
+    if (page != owner.currentPage()) for (auto* knob : pages[(size_t) owner.currentPage()]->knobs()) knob->finishEntry(true);
     owner.showPage(page);
     timerCallback();
 }
@@ -237,7 +241,7 @@ void DropforgeEditor::timerCallback()
                            + (enabled ? "On, mode " + juce::String(modeLetters[(size_t) mode]) + " " + modeNames[(size_t) mode] + "."
                                       : juce::String("Off; still editable.")));
         // Hidden pages neither repaint nor keep a typing field open.
-        if (index != current && page.isVisible()) page.levelKnob().finishEntry(true);
+        if (index != current && page.isVisible()) for (auto* knob : page.knobs()) knob->finishEntry(true);
         page.setVisible(index == current);
         if (index == current) page.showMode(mode);
     }

@@ -66,6 +66,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout DropforgeProcessor::createPa
         juce::ParameterID{dropforge::parameters::rhythmDestroy, 1}, "Furnace Destruction", false));
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID{dropforge::parameters::leadDestroy, 1}, "Blade Destruction", false));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{dropforge::parameters::leadPortamento, 1}, "Blade Portamento", juce::StringArray{"Off", "Legato", "Always"}, 0));
+    // Skewed so the musical short times get most of the travel: 150 ms sits mid-way.
+    juce::NormalisableRange<float> portamentoRange{0.0f, 1000.0f};
+    portamentoRange.setSkewForCentre(150.0f);
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{dropforge::parameters::leadPortamentoMs, 1}, "Blade Portamento Time", portamentoRange, 60.0f,
+        juce::AudioParameterFloatAttributes{}.withLabel("ms")));
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID{dropforge::parameters::leadOctave, 1}, "Blade Octave", -1, 1, 0));
     return layout;
 }
 
@@ -88,6 +98,9 @@ DropforgeProcessor::DropforgeProcessor()
     leadLevel = state.getRawParameterValue(dropforge::parameters::leadLevel);
     leadMode = state.getRawParameterValue(dropforge::parameters::leadMode);
     leadDestroy = state.getRawParameterValue(dropforge::parameters::leadDestroy);
+    leadPortamento = state.getRawParameterValue(dropforge::parameters::leadPortamento);
+    leadPortamentoMs = state.getRawParameterValue(dropforge::parameters::leadPortamentoMs);
+    leadOctave = state.getRawParameterValue(dropforge::parameters::leadOctave);
     core.setLayersEnabled(true, true);
     core.reset(0.0f);
 }
@@ -161,6 +174,9 @@ void DropforgeProcessor::applyModes() noexcept
     core.setFurnaceOptions(readToggle(rhythmMono, false), readToggle(rhythmDrop, false));
     core.setDestruction(readToggle(bassDestroy, false), readToggle(rhythmDestroy, false));
     core.setLeadMode(index(leadMode), readToggle(leadDestroy, false));
+    const auto octave = leadOctave->load(std::memory_order_relaxed);
+    core.setLeadPlaying(std::clamp(index(leadPortamento), 0, 2), leadPortamentoMs->load(std::memory_order_relaxed),
+                        std::isfinite(octave) ? static_cast<int>(std::lround(octave)) : 0);
 }
 
 void DropforgeProcessor::publishMeters() noexcept

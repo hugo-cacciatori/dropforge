@@ -24,4 +24,7 @@ inline constexpr auto leadEnabled = "lead_on";
 inline constexpr auto leadLevel = "lead_level";
 inline constexpr auto leadMode = "lead_mode";
 inline constexpr auto leadDestroy = "lead_destroy";
+inline constexpr auto leadPortamento = "lead_porta";
+inline constexpr auto leadPortamentoMs = "lead_porta_ms";
+inline constexpr auto leadOctave = "lead_octave";
 }

@@ -2,6 +2,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Theme.h"
 #include <cmath>
+#include <vector>
 
 namespace dropforge::ui
 {
@@ -249,6 +250,73 @@ private:
     std::array<ModeButton, 4> buttons;
     juce::ParameterAttachment attachment;
     int current = 0;
+};
+
+// A small segmented selector (Portamento, Octave) bound to a choice or
+// integer parameter: one button per value, each click one host gesture.
+class ChoiceSelector final : public juce::Component
+{
+public:
+    ChoiceSelector(juce::RangedAudioParameter& parameter, const juce::String& name, const juce::String& help,
+                   const std::vector<const char*>& labels, float firstValue)
+        : first(firstValue), attachment(parameter, [this](float value) { show(value); })
+    {
+        setTitle(name);
+        setFocusContainerType(FocusContainerType::focusContainer);
+        for (std::size_t i = 0; i < labels.size(); ++i)
+        {
+            auto& button = *buttons.emplace_back(std::make_unique<Segment>());
+            button.setButtonText(labels[i]);
+            button.setTitle(name + " " + labels[i]);
+            button.setTooltip(name + ": " + help);
+            button.setHelpText(button.getTooltip());
+            button.setRadioGroupId(1);
+            button.setWantsKeyboardFocus(true);
+            const auto value = first + static_cast<float>(i);
+            button.onClick = [this, value] { attachment.setValueAsCompleteGesture(value); };
+            addAndMakeVisible(button);
+        }
+        attachment.sendInitialUpdate();
+    }
+    void setAccent(juce::Colour colour) { for (auto& button : buttons) { button->accent = colour; button->repaint(); } }
+    std::size_t size() const noexcept { return buttons.size(); }
+    juce::Button& button(std::size_t index) noexcept { return *buttons[index]; }
+    int selectedIndex() const noexcept { return selected; }
+    void resized() override
+    {
+        const auto width = getWidth() / static_cast<int>(buttons.size());
+        for (std::size_t i = 0; i < buttons.size(); ++i)
+            buttons[i]->setBounds(static_cast<int>(i) * width, 0, i + 1 == buttons.size() ? getWidth() - static_cast<int>(i) * width : width, getHeight());
+    }
+private:
+    struct Segment final : juce::Button
+    {
+        Segment() : Button({}) {}
+        juce::Colour accent = colours::text;
+        void paintButton(juce::Graphics& g, bool highlighted, bool) override
+        {
+            const auto on = getToggleState();
+            const auto bounds = getLocalBounds().toFloat().reduced(1.5f);
+            g.setColour(on ? accent.withAlpha(0.22f) : highlighted ? colours::raised : colours::panel);
+            g.fillRoundedRectangle(bounds, 6.0f);
+            g.setColour(on ? accent : colours::edge);
+            g.drawRoundedRectangle(bounds, 6.0f, on ? 1.6f : 1.0f);
+            g.setColour(on ? colours::text : colours::dimText);
+            g.setFont(titleFont(16.0f));
+            g.drawFittedText(getButtonText().toUpperCase(), getLocalBounds(), juce::Justification::centred, 1);
+            drawFocus(g, *this, 6.0f);
+        }
+    };
+    void show(float value)
+    {
+        selected = juce::jlimit(0, static_cast<int>(buttons.size()) - 1, juce::roundToInt(value - first));
+        for (std::size_t i = 0; i < buttons.size(); ++i)
+            buttons[i]->setToggleState(static_cast<int>(i) == selected, juce::dontSendNotification);
+    }
+    float first;
+    std::vector<std::unique_ptr<Segment>> buttons;
+    juce::ParameterAttachment attachment;
+    int selected = 0;
 };
 
 // Stereo peak meter with clip and gain-reduction lights, fed at 30 Hz from

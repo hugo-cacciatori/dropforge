@@ -66,6 +66,12 @@ public:
     void setLead(bool on, float levelDb) noexcept { engine.setLeadEnabled(on); engine.setLeadLevel(levelDb); }
     // Blade's mode (0-3 = A-D) and Destruction; real-time safe, crossfading.
     void setLeadMode(int mode, bool destroy) noexcept { engine.setLeadMode(mode); engine.setLeadDestruction(destroy); }
+    // Blade's Portamento (0 Off, 1 Legato, 2 Always) and time, and Octave.
+    void setLeadPlaying(int portamento, float milliseconds, int octave) noexcept
+    {
+        engine.setLeadPortamento(static_cast<Engine::Portamento>(std::clamp(portamento, 0, 2)), milliseconds);
+        engine.setLeadOctave(octave);
+    }
     // Diagnostic voicing for renders and tests. The plugin keeps the fixed
     // 140 Hz split and 0.5 drive the owner chose; it never calls this.
     void setBassParameters(float splitHz, float drive) noexcept
